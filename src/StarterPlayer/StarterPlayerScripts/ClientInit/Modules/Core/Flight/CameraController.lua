@@ -166,10 +166,15 @@ function CameraController:Shake(magnitude: number, roughness: number, fadeIn: nu
 	self.Shaker:ShakeOnce(magnitude, roughness, fadeIn, math.max(fadeOut, 0.01))
 end
 
--- Carving through geometry: magnitude scales with the hole punched.
-function CameraController:ShakeCarve(carveRadius: number)
+-- Carving through geometry: magnitude scales with the hole punched AND the speed
+-- it was punched at. Carve radius saturates at CarveRadiusMax, so radius alone
+-- would make every high-speed hit feel identical.
+function CameraController:ShakeCarve(carveRadius: number, impactSpeed: number)
 	local shake = Config.Shake
-	local magnitude = math.min(shake.CarveBase + carveRadius * shake.CarvePerRadius, shake.CarveMax)
+	local magnitude = math.min(
+		shake.CarveBase + carveRadius * shake.CarvePerRadius + impactSpeed * shake.CarvePerSpeed,
+		shake.CarveMax
+	)
 	self:Shake(magnitude, shake.CarveRoughness, shake.CarveFadeIn, shake.CarveFadeOut)
 end
 

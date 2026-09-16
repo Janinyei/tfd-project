@@ -19,10 +19,13 @@
 	must be requested before the body reaches the wall.
 ]]
 
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local Trove = require(ReplicatedStorage.Modules.Utils.Trove)
+
+local player = Players.LocalPlayer
 
 local FlightDestructionController = {}
 
@@ -97,7 +100,17 @@ function FlightDestructionController:_update(dt: number)
 	end
 
 	local direction = travel / speed
-	local leadDistance = math.max(speed * dt * destruction.LeadFactor, destruction.MinLeadDistance)
+
+	-- Predictive lead: how far ahead the probe looks. The dt term covers this
+	-- frame's travel; the ping term covers the request's round trip, which is
+	-- the part that actually matters at speed — the hole has to exist before the
+	-- body arrives, and the server is the only thing that can make it.
+	local ping = player:GetNetworkPing()
+	local leadDistance = math.clamp(
+		speed * (dt * destruction.LeadFactor + ping * destruction.PingLeadFactor),
+		destruction.MinLeadDistance,
+		destruction.MaxLeadDistance
+	)
 
 	-- Probe geometry is recorded BEFORE the rate-limit/dedupe bails, so the
 	-- gizmos show the cast that is actually happening every frame, not only the
@@ -140,17 +153,21 @@ function FlightDestructionController:_update(dt: number)
 		return
 	end
 
+	-- Bias the carve centre into the surface along travel. A sphere centred on
+	-- the contact point only takes the near half of the wall out.
+	local carvePosition = result.Position + direction * (radius * destruction.CarveDepthBias)
+
 	lastCarveTime = now
 	lastCarvePosition = result.Position
 
-	probeDebug.CarvePosition = result.Position
+	probeDebug.CarvePosition = carvePosition
 	probeDebug.CarveRadius = radius
 	probeDebug.CarveClock = now
 	probeDebug.CarveCount += 1
 
-	Net.RequestCarve:Fire(result.Position, radius, direction, speed)
+	Net.RequestCarve:Fire(carvePosition, radius, direction, speed)
 
-	Camera:ShakeCarve(radius)
+	Camera:ShakeCarve(radius, speed)
 
 	-- Optimistic impact cost. Server owns destruction, client owns movement.
 	Flight:ApplySpeedLoss(destruction.SpeedLossPerCarve * radius + speed * destruction.SpeedLossSpeedScale)

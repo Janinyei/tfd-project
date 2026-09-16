@@ -51,7 +51,7 @@ FlightConfig.Flight = {
 	-- the nose is wherever you aimed it the same frame.
 	MouseSensitivity = 0.006,
 	-- Cap on the thrust force LinearVelocity may apply to hold target velocity.
-	MaxThrustForce = 999999999999999,
+	MaxThrustForce = 500000,
 
 	ToggleKey = Enum.KeyCode.F,
 	BoostKey = Enum.KeyCode.LeftShift,
@@ -102,10 +102,18 @@ FlightConfig.Camera = {
 	never terminates.
 ]]
 FlightConfig.Shake = {
-	-- Carving through geometry. Scales with the size of the hole punched.
-	CarveBase = 0.25,
-	CarvePerRadius = 0.055,
-	CarveMax = 1.6,
+	--[[
+		Carving through geometry. Scales with BOTH the hole punched and the speed
+		it was punched at:
+			magnitude = CarveBase + radius * CarvePerRadius + speed * CarvePerSpeed
+		Radius alone is not enough — carve radius saturates at CarveRadiusMax, so
+		without the speed term a 700 stud/s hit through a wall shakes exactly as
+		hard as a 200 stud/s one.
+	]]
+	CarveBase = 0.2,
+	CarvePerRadius = 0.045,
+	CarvePerSpeed = 0.0022,
+	CarveMax = 2.4,
 	CarveRoughness = 11,
 	CarveFadeIn = 0.03,
 	CarveFadeOut = 0.35,
@@ -133,15 +141,46 @@ FlightConfig.Shake = {
 }
 
 FlightConfig.Destruction = {
-	-- Below this speed, flying into geometry does not carve at all.
-	MinCarveSpeed = 45,
+	--[[
+		Hard speed gate. Below this, flying into geometry does not carve at all —
+		you bounce. Enforced in THREE places, deliberately:
+		  1. client skips the probe entirely;
+		  2. server rejects any request reporting less than this;
+		  3. server independently checks the player's own replicated root
+		     velocity, so a client cannot just lie about its speed.
+	]]
+	MinCarveSpeed = 130,
+	-- Fraction of MinCarveSpeed the server requires from its OWN measurement of
+	-- the player's velocity. Below 1 to tolerate replication lag and the speed
+	-- already bled off by the impact before the packet lands.
+	ServerSpeedTolerance = 0.6,
 
-	-- Spherecast probe. Radius covers the character; lead distance is speed-scaled
-	-- because server destruction is not instant and the carve must exist before
-	-- the body arrives.
+	--[[
+		PREDICTIVE PROBE. Server destruction is not instant: the request has to
+		fly to the server, carve, and the result replicate back. At 400 studs/s
+		that round trip is tens of studs of travel, so the probe looks AHEAD by
+		  lead = speed * (dt * LeadFactor + ping * PingLeadFactor)
+		floored at MinLeadDistance and capped at MaxLeadDistance. The ping term
+		is what actually "makes up for lag" — it scales with the real measured
+		round trip instead of a guess.
+	]]
 	ProbeRadius = 2.5,
-	LeadFactor = 2.0, -- lead = speed * dt * LeadFactor
+	LeadFactor = 2.0,
+	-- Multiplier on measured round-trip time. GetNetworkPing() reports one-way
+	-- seconds, so 2.0 covers the full round trip.
+	PingLeadFactor = 2.0,
 	MinLeadDistance = 6,
+	-- Cap: without it, a 700 stud/s boost on a bad connection would probe far
+	-- enough ahead to carve buildings you never actually reach.
+	MaxLeadDistance = 90,
+
+	--[[
+		Push the carve centre INTO the surface along travel, as a fraction of the
+		carve radius. A sphere centred exactly on the contact point only removes
+		the near half of the wall, so a thick wall still blocks you; biasing
+		inward means the hole is already deep enough when you arrive.
+	]]
+	CarveDepthBias = 0.6,
 
 	-- Carve radius as a function of impact speed.
 	CarveRadiusBase = 6,

@@ -24,6 +24,7 @@
 	not on events.
 ]]
 
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -31,6 +32,8 @@ local UserInputService = game:GetService("UserInputService")
 local Iris = require(ReplicatedStorage.Modules.Packages.Iris)
 local Gizmo = require(ReplicatedStorage.Modules.Utils.Gizmo)
 local Trove = require(ReplicatedStorage.Modules.Utils.Trove)
+
+local player = Players.LocalPlayer
 
 local DebugController = {}
 
@@ -186,6 +189,9 @@ function DebugController:_render()
 	Iris.SeparatorText({ "Destruction" })
 	local probe = Destruction:GetProbeDebug()
 	line("Probing", probe.Active)
+	line("Over speed gate", velocity.Magnitude >= Config.Destruction.MinCarveSpeed)
+	line("Speed gate", Config.Destruction.MinCarveSpeed)
+	line("Ping (ms)", player:GetNetworkPing() * 1000)
 	line("Lead distance", probe.Lead)
 	line("Probe radius", probe.ProbeRadius)
 	line("Hit", probe.HitPosition)

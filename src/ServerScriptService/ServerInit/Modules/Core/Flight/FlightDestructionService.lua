@@ -11,9 +11,11 @@
 	  * rate limit per player;
 	  * the carve must be near the requesting player's own root;
 	  * radius clamped to MaxRequestRadius;
-	  * speed clamped to FlightConfig.Flight.BoostMaxSpeed, then force and voxel
-	    size are DERIVED from it rather than sent by the client — a client cannot
-	    ask for 0.1-stud voxels and blow the subdivision budget.
+	  * requests below MinCarveSpeed rejected outright, and cross-checked against
+	    the server's own measurement of the player's velocity;
+	  * speed capped at BoostMaxSpeed + StrafeSpeed + HoverSpeed, then force and
+	    voxel size are DERIVED from it rather than sent by the client — a client
+	    cannot ask for 0.1-stud voxels and blow the subdivision budget.
 ]]
 
 local Players = game:GetService("Players")
@@ -65,12 +67,28 @@ function FlightDestructionService:_onRequestCarve(
 		return
 	end
 
+	-- SPEED GATE. A request reporting less than MinCarveSpeed is rejected, not
+	-- clamped up: clamping would have let a client claim speed 0 and still carve,
+	-- which defeats the whole "you must be moving fast" rule.
+	if speed < destruction.MinCarveSpeed then
+		return
+	end
+
+	-- Independent check against the server's OWN view of the player's velocity,
+	-- so the reported number cannot simply be fabricated. Tolerance is below 1
+	-- because replication lags and the impact has usually already bled speed off
+	-- by the time this packet lands.
+	local measured = root.AssemblyLinearVelocity.Magnitude
+	if measured < destruction.MinCarveSpeed * destruction.ServerSpeedTolerance then
+		return
+	end
+
 	-- The client reports TRAVEL speed, which can exceed forward top speed because
 	-- strafe and hover thrust add on top of it. Ceiling is the sum, so a legitimate
 	-- diagonal boost is not silently penalised while a fabricated number still is.
 	local flight = Config.Flight
 	local maxTravelSpeed = flight.BoostMaxSpeed + flight.StrafeSpeed + flight.HoverSpeed
-	speed = math.clamp(speed, destruction.MinCarveSpeed, maxTravelSpeed)
+	speed = math.min(speed, maxTravelSpeed)
 
 	-- The client's requested radius is honoured only up to the clamp, and never
 	-- beyond what its claimed speed justifies.
