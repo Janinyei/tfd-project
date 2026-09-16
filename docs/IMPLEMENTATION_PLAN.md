@@ -6,8 +6,16 @@
 | 1 `FlightConfig`, `Net`, `FlightController` (clamped-pitch hover flight) | **done** |
 | 2 `CameraController` (center-lock, chase, speed FOV) | **done** |
 | 3 `FlightDestructionController` (client spherecast) + `FlightDestructionService` (server validate + carve) | **done** |
-| 4 Impact feel (shake, crash/tumble, SFX) | not started |
+| 4 Camera shake (carve / hard impact / speed rumble) | **done** |
+| 4b Remaining impact feel (crash tumble, SFX, speed lines) | not started |
 | 5 Debug panel + gizmos (`Interface/DebugController.lua`) | **done** |
+
+Shake uses the vendored `Utils/CameraShaker` (Sleitnick's RbxCameraShaker), wired the same
+way as bachi's `CameraController`: the shaker runs on `RenderPriority.Camera + 1` and writes
+a `shakeCFrame`, which the camera multiplies in last. Three sources, all tuned in
+`FlightConfig.Shake`: carve (magnitude scales with hole radius), hard impact (magnitude
+scales with speed lost), and a sustained speed rumble whose `Magnitude` is re-driven each
+frame from travel speed.
 
 Debug: `9` toggles the Iris panel. Live knobs = `MaxSpeed`, `MaxThrustForce` (written
 straight into `FlightConfig`, re-pushed to the constraints every frame so they apply

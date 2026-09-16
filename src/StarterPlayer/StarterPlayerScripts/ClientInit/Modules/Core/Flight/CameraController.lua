@@ -22,6 +22,7 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
 local Trove = require(ReplicatedStorage.Modules.Utils.Trove)
+local CameraShaker = require(ReplicatedStorage.Modules.Utils.CameraShaker)
 
 local player = Players.LocalPlayer
 
@@ -38,8 +39,30 @@ local currentFov = 0
 local smoothedRotation = CFrame.identity
 local initialized = false
 
+-- Shake is accumulated by CameraShaker on its own render step (Camera + 1) and
+-- multiplied into the camera CFrame here, exactly as in bachi-battlegrounds.
+local shakeCFrame = CFrame.identity
+-- Single sustained instance whose Magnitude is re-driven from speed each frame.
+local rumble = nil
+
 local function ease(response: number, dt: number): number
 	return 1 - math.exp(-response * dt)
+end
+
+--[[
+	Sustained rumble tracking travel speed. One instance lives forever with its
+	Magnitude re-driven each frame — cheaper and smoother than starting/stopping
+	shakes as you cross the speed threshold, which would audibly re-attack.
+]]
+function CameraController:_updateRumble(travelSpeed: number)
+	if not rumble then
+		return
+	end
+	local shake = Config.Shake
+	local span = math.max(shake.RumbleMaxSpeed - shake.RumbleMinSpeed, 1)
+	local alpha = math.clamp((travelSpeed - shake.RumbleMinSpeed) / span, 0, 1)
+	rumble.Magnitude = shake.RumbleMaxMagnitude * alpha
+	rumble.Roughness = shake.RumbleRoughness
 end
 
 function CameraController:_update(dt: number)
@@ -60,6 +83,9 @@ function CameraController:_update(dt: number)
 			camera.FieldOfView = Config.Camera.BaseFov
 			UserInputService.MouseIconEnabled = true
 			initialized = false
+		end
+		if rumble then
+			rumble.Magnitude = 0
 		end
 		return
 	end
@@ -88,6 +114,7 @@ function CameraController:_update(dt: number)
 		:Orthonormalize()
 
 	local speed = Flight:GetSpeed()
+	self:_updateRumble(Flight:GetVelocity().Magnitude)
 
 	-- Chase distance grows with speed, eased.
 	local targetDistance = math.min(cam.Distance + speed * cam.DistanceSpeedScale, cam.MaxDistance)
@@ -119,17 +146,66 @@ function CameraController:_update(dt: number)
 		end
 	end
 
-	camera.CFrame = CFrame.new(focus + offset) * smoothedRotation
+	-- Shake is the LAST factor, applied in camera-local space so a rattle never
+	-- moves the focus point or fights the collision pull-in above.
+	camera.CFrame = CFrame.new(focus + offset) * smoothedRotation * shakeCFrame
+end
+
+--------------------------------------------------------------------------------
+-- PUBLIC
+--------------------------------------------------------------------------------
+
+--[[
+	One-shot shake. fadeOut must be > 0: ShakeOnce with a zero fade-out never
+	reaches the Inactive state and the instance is never collected.
+]]
+function CameraController:Shake(magnitude: number, roughness: number, fadeIn: number, fadeOut: number)
+	if not self.Shaker then
+		return
+	end
+	self.Shaker:ShakeOnce(magnitude, roughness, fadeIn, math.max(fadeOut, 0.01))
+end
+
+-- Carving through geometry: magnitude scales with the hole punched.
+function CameraController:ShakeCarve(carveRadius: number)
+	local shake = Config.Shake
+	local magnitude = math.min(shake.CarveBase + carveRadius * shake.CarvePerRadius, shake.CarveMax)
+	self:Shake(magnitude, shake.CarveRoughness, shake.CarveFadeIn, shake.CarveFadeOut)
+end
+
+-- Hitting something that does not break: magnitude scales with speed lost.
+function CameraController:ShakeImpact(speedLost: number)
+	local shake = Config.Shake
+	local magnitude = math.min(speedLost * shake.ImpactPerSpeedLoss, shake.ImpactMax)
+	self:Shake(magnitude, shake.ImpactRoughness, shake.ImpactFadeIn, shake.ImpactFadeOut)
 end
 
 function CameraController:Init(core)
 	Core = core
 	self._trove = Trove.new()
+
+	-- Camera + 1: the shaker's own render step runs AFTER this module writes the
+	-- base CFrame, so the offset it produces is consumed on the next frame.
+	-- Storing it rather than writing camera.CFrame from the callback keeps a
+	-- single owner of the final CFrame.
+	self.Shaker = CameraShaker.new(Enum.RenderPriority.Camera.Value + 1, function(offset)
+		shakeCFrame = offset
+	end)
 end
 
 function CameraController:Start()
 	Config = Core:Get("FlightConfig")
 	Flight = Core:Get("FlightController")
+
+	self.Shaker:Start()
+	self._trove:Add(function()
+		self.Shaker:Stop()
+	end)
+
+	-- Sustained, never removed: DeleteOnInactive would collect it the moment
+	-- magnitude reached zero at low speed, and it would have to be recreated.
+	rumble = self.Shaker:StartShake(0, Config.Shake.RumbleRoughness, Config.Shake.RumbleFadeIn)
+	rumble.DeleteOnInactive = false
 
 	RunService:BindToRenderStep("FlightCamera", Enum.RenderPriority.Camera.Value, function(dt)
 		self:_update(dt)

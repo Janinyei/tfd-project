@@ -175,6 +175,7 @@ function DebugController:_render()
 	local velocity = Flight:GetVelocity()
 	line("Travel speed", velocity.Magnitude)
 	line("Velocity", velocity)
+	line("Impact loss (this frame)", Flight:GetLastImpactLoss())
 
 	local orientation = Flight:GetOrientation()
 	local pitchRad, yawRad = orientation:ToEulerAnglesYXZ()

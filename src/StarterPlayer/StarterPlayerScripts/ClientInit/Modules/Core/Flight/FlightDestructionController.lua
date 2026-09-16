@@ -30,6 +30,7 @@ local Core
 local Config
 local Net
 local Flight
+local Camera
 
 local lastCarveTime = 0
 local lastCarvePosition: Vector3? = nil
@@ -149,6 +150,8 @@ function FlightDestructionController:_update(dt: number)
 
 	Net.RequestCarve:Fire(result.Position, radius, direction, speed)
 
+	Camera:ShakeCarve(radius)
+
 	-- Optimistic impact cost. Server owns destruction, client owns movement.
 	Flight:ApplySpeedLoss(destruction.SpeedLossPerCarve * radius + speed * destruction.SpeedLossSpeedScale)
 end
@@ -167,6 +170,7 @@ function FlightDestructionController:Start()
 	Config = Core:Get("FlightConfig")
 	Net = Core:Get("Net")
 	Flight = Core:Get("FlightController")
+	Camera = Core:Get("CameraController")
 
 	self:_refreshCastParams()
 

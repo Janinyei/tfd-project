@@ -105,6 +105,47 @@ FlightConfig.Camera = {
 	CollisionPadding = 1.5,
 }
 
+--[[
+	Camera shake (CameraShaker, vendored at Utils/CameraShaker).
+
+	Magnitudes are in the same units CameraShakeInstance uses: roughly studs of
+	positional offset / degrees of rotational offset before influence scaling.
+	Roughness is oscillations per second — high = sharp rattle, low = heavy sway.
+
+	One-shot shakes MUST have a non-zero fade-out. ShakeOnce with fadeOut = 0
+	never terminates.
+]]
+FlightConfig.Shake = {
+	-- Carving through geometry. Scales with the size of the hole punched.
+	CarveBase = 0.25,
+	CarvePerRadius = 0.055,
+	CarveMax = 1.6,
+	CarveRoughness = 11,
+	CarveFadeIn = 0.03,
+	CarveFadeOut = 0.35,
+
+	-- Slamming something that does NOT break. Detected as unexplained velocity
+	-- loss in a single frame (see FlightController._detectImpact), so the
+	-- threshold must sit above anything throttle/brake/drag/carve can produce.
+	ImpactMinSpeedLoss = 80,
+	ImpactPerSpeedLoss = 0.006,
+	ImpactMax = 3,
+	ImpactRoughness = 16,
+	ImpactFadeIn = 0.02,
+	ImpactFadeOut = 0.6,
+
+	-- Sustained high-speed rumble. Magnitude is re-driven every frame from
+	-- travel speed, so one sustained instance covers the whole range.
+	RumbleMinSpeed = 260,
+	RumbleMaxSpeed = 700,
+	RumbleMaxMagnitude = 0.22,
+	RumbleRoughness = 7,
+	-- MUST stay > 0. CameraShakeInstance sets `sustain = fadeInTime > 0`, so a
+	-- zero fade-in makes the rumble a fading one-shot instead of a sustained
+	-- shake, and its fade math then divides by a zero fade-out duration.
+	RumbleFadeIn = 0.4,
+}
+
 FlightConfig.Destruction = {
 	-- Below this speed, flying into geometry does not carve at all.
 	MinCarveSpeed = 45,

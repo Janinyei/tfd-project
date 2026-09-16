@@ -40,6 +40,7 @@ local FlightController = {}
 
 local Core
 local Config
+local Camera
 
 -- Live state
 local flying = false
@@ -61,6 +62,11 @@ local mouseDeltaX, mouseDeltaY = 0, 0
 -- the craft ignores mouse motion entirely, otherwise reaching for a slider
 -- would spin the nose.
 local mouseLocked = true
+
+-- Impact detection: measured speed last frame, and the loss that tripped the
+-- most recent hard impact (for the debug panel).
+local lastMeasuredSpeed = 0
+local lastImpactLoss = 0
 
 -- Rig
 local character: Model? = nil
@@ -204,6 +210,11 @@ function FlightController:StartFlight()
 	mouseDeltaX, mouseDeltaY = 0, 0
 	mouseLocked = true
 
+	-- Seeded from the real assembly, or a stale value from a previous flight
+	-- would register as a huge impact on the first frame.
+	lastMeasuredSpeed = root.AssemblyLinearVelocity.Magnitude
+	lastImpactLoss = 0
+
 	if not self:_buildRig() then
 		return
 	end
@@ -343,6 +354,42 @@ function FlightController:_integrateThrust(dt: number)
 	)
 end
 
+--[[
+	Detect slamming something that does NOT break.
+
+	The constraint drives the assembly toward `velocity` every frame, so measured
+	speed tracks commanded speed closely — EXCEPT when a collision steals it.
+	A per-frame drop in measured speed above ImpactMinSpeedLoss therefore means
+	geometry stopped us, not the throttle. The threshold has to clear anything
+	brake/drag/carve-bleed could account for in one frame, which is why it sits
+	at 80 rather than something small.
+
+	Also bleeds the commanded speed down to what was actually achieved; without
+	that, the constraint would keep shoving the craft into the wall at full
+	throttle while the camera shook.
+]]
+function FlightController:_detectImpact()
+	if not root then
+		return
+	end
+
+	local measured = root.AssemblyLinearVelocity.Magnitude
+	local lost = lastMeasuredSpeed - measured
+	lastMeasuredSpeed = measured
+
+	lastImpactLoss = 0
+	if lost < Config.Shake.ImpactMinSpeedLoss then
+		return
+	end
+
+	lastImpactLoss = lost
+	forwardSpeed = math.clamp(forwardSpeed, -Config.Flight.ReverseMaxSpeed, measured)
+
+	if Camera then
+		Camera:ShakeImpact(lost)
+	end
+end
+
 function FlightController:_update(dt: number)
 	if not flying then
 		return
@@ -354,6 +401,7 @@ function FlightController:_update(dt: number)
 
 	self:_steer(dt)
 	self:_integrateThrust(dt)
+	self:_detectImpact()
 
 	-- Re-asserted every frame: the PlayerModule resets MouseBehavior on respawn
 	-- and on input-mode changes. Skipped while unlocked so the cursor stays free
@@ -404,6 +452,11 @@ function FlightController:GetVelocity(): Vector3
 	return velocity
 end
 
+-- Speed stolen by the most recent hard impact, 0 on any frame without one.
+function FlightController:GetLastImpactLoss(): number
+	return lastImpactLoss
+end
+
 function FlightController:GetRoot(): BasePart?
 	return root
 end
@@ -452,6 +505,7 @@ end
 
 function FlightController:Start()
 	Config = Core:Get("FlightConfig")
+	Camera = Core:Get("CameraController")
 
 	if player.Character then
 		self:_bindCharacter(player.Character)
