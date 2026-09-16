@@ -68,9 +68,17 @@ local SIM_PART_CAPACITY = 4000
 
 local MAX_VOXEL_ID = 65535
 
--- Registered by CollisionGroupManager, which disables Voxels <-> Players so
--- neither the static shell nor flying debris can body-block a player.
-local SIM_COLLISION_GROUP = "Voxels"
+--[[
+	Two groups, registered by CollisionGroupManager:
+	  VoxelShell  — the anchored voxels standing in for the intact remainder of a
+	                damaged part. These MUST collide with players, or a wall stops
+	                blocking you entirely the moment it is hit once.
+	  VoxelDebris — unanchored launched rubble. Does NOT collide with players, so
+	                flying chunks never body-block or shove the craft.
+	Every sim part starts as shell and is switched when it becomes debris.
+]]
+local SHELL_COLLISION_GROUP = "VoxelShell"
+local DEBRIS_COLLISION_GROUP = "VoxelDebris"
 
 --------------------------------------------------------------------------------
 -- BUFFERS
@@ -117,7 +125,7 @@ local function createSimTemplate()
 	part.CastShadow = false
 	part.TopSurface = Enum.SurfaceType.Smooth
 	part.BottomSurface = Enum.SurfaceType.Smooth
-	part.CollisionGroup = SIM_COLLISION_GROUP
+	part.CollisionGroup = SHELL_COLLISION_GROUP
 	part.Archivable = true
 	return part
 end
@@ -322,7 +330,7 @@ local function configureSimPart(part: BasePart, size: Vector3)
 	part.CanQuery = true
 	part.CanTouch = false
 	part.CastShadow = false
-	part.CollisionGroup = SIM_COLLISION_GROUP
+	part.CollisionGroup = SHELL_COLLISION_GROUP
 end
 
 local function resetAndReturnSimPart(part: BasePart)
@@ -332,7 +340,7 @@ local function resetAndReturnSimPart(part: BasePart)
 	part.CanTouch = false
 	part.AssemblyLinearVelocity = Vector3.zero
 	part.AssemblyAngularVelocity = Vector3.zero
-	part.CollisionGroup = SIM_COLLISION_GROUP
+	part.CollisionGroup = SHELL_COLLISION_GROUP
 	simCache:ReturnPart(part)
 end
 
@@ -1086,6 +1094,9 @@ function VoxelDestructionService:_destroyVolume(
 	for _, activation in dynamicActivations do
 		local p = activation.Part
 		p.Anchored = false
+		-- Now rubble, not structure: stops colliding with players. Reset back to
+		-- the shell group in resetAndReturnSimPart when the part is recycled.
+		p.CollisionGroup = DEBRIS_COLLISION_GROUP
 		p.AssemblyLinearVelocity = activation.LinearVelocity
 		p.AssemblyAngularVelocity = activation.AngularVelocity
 	end

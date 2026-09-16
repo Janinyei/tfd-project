@@ -165,7 +165,7 @@ FlightConfig.Destruction = {
 		round trip instead of a guess.
 	]]
 	ProbeRadius = 2.5,
-	LeadFactor = 2.0,
+	LeadFactor = 5.0,
 	-- Multiplier on measured round-trip time. GetNetworkPing() reports one-way
 	-- seconds, so 2.0 covers the full round trip.
 	PingLeadFactor = 2.0,

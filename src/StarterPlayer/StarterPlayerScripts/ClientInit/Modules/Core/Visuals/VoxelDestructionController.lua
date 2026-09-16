@@ -456,4 +456,21 @@ function VoxelDestructionController:Cleanup()
 	end
 end
 
+--[[
+	Container holding the client's visual voxels.
+
+	Needed by FlightDestructionController's probe: once a part has been hit, the
+	server sets the ORIGINAL part's CanQuery = false, and the geometry standing in
+	for the remainder is the voxel shell — which lives here on the client and in a
+	non-replicating folder on the server. A probe filtered to workspace.Map alone
+	therefore sees nothing after the first hit, which is why a part could only
+	ever be destroyed once.
+
+	These parts keep CanQuery = true even with ClientCollisionEnabled off
+	precisely so they remain probe-able.
+]]
+function VoxelDestructionController:GetVisualContainer(): Instance?
+	return voxelContainer
+end
+
 return VoxelDestructionController

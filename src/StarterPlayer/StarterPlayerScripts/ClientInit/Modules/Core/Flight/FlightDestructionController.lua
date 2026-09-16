@@ -34,6 +34,7 @@ local Config
 local Net
 local Flight
 local Camera
+local Voxels
 
 local lastCarveTime = 0
 local lastCarvePosition: Vector3? = nil
@@ -69,10 +70,28 @@ local function resolveContainers(names: { string }): { Instance }
 	return containers
 end
 
+--[[
+	Probe include list = destructible map folders PLUS the client's visual voxel
+	container.
+
+	The voxel container is not optional. On the first hit the server sets the
+	original part's CanQuery = false and the remaining solid geometry becomes the
+	voxel shell, so a probe filtered to workspace.Map alone stops finding anything
+	there — which is exactly why a part could only be broken once and then let you
+	through. The shell voxels answer queries, so including them keeps a damaged
+	part destructible until it is actually gone.
+]]
 function FlightDestructionController:_refreshCastParams()
+	local containers = resolveContainers(Config.DestructibleContainers)
+
+	local visualContainer = Voxels and Voxels:GetVisualContainer()
+	if visualContainer then
+		table.insert(containers, visualContainer)
+	end
+
 	castParams = RaycastParams.new()
 	castParams.FilterType = Enum.RaycastFilterType.Include
-	castParams.FilterDescendantsInstances = resolveContainers(Config.DestructibleContainers)
+	castParams.FilterDescendantsInstances = containers
 	castParams.RespectCanCollide = false
 end
 
@@ -188,11 +207,16 @@ function FlightDestructionController:Start()
 	Net = Core:Get("Net")
 	Flight = Core:Get("FlightController")
 	Camera = Core:Get("CameraController")
+	Voxels = Core:Get("VoxelDestructionController")
 
 	self:_refreshCastParams()
 
-	-- Map folders can be added after join (streaming, or the map being built in
-	-- Studio while the session runs), so the include list is rebuilt on change.
+	-- Rebuilt on change because the include list has two late-arriving members:
+	-- map folders (streaming, or the map being built in Studio mid-session) and
+	-- the VoxelVisuals container, which VoxelDestructionController creates in its
+	-- own Start — that sorts AFTER this module's Start, so the first
+	-- _refreshCastParams above cannot see it. Parenting it to workspace fires
+	-- ChildAdded, which picks it up.
 	self._trove:Connect(workspace.ChildAdded, function()
 		self:_refreshCastParams()
 	end)

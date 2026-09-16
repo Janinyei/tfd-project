@@ -2,23 +2,24 @@
 --[[
 	CollisionGroupManager  (server)
 
-	Two groups only:
-	  Players — every BasePart of every character
-	  Voxels  — every voxel sim part spawned by VoxelDestructionService
+	Three groups:
+	  Players     — every BasePart of every character
+	  VoxelShell  — anchored voxels standing in for the intact remainder of a
+	                damaged part. SOLID to players.
+	  VoxelDebris — unanchored launched rubble. NOT solid to players.
 
-	Players <-> Voxels is DISABLED: neither the static shell that replaces a
-	damaged part nor the flying debris can body-block a player. Voxels still
-	collide with Default (map geometry) and with each other, so rubble piles and
-	settles normally.
+	The shell/debris split matters because VoxelDestructionService makes the
+	original part non-collidable on first hit and hands collision to the shell.
+	A single "Voxels" group that players ignored therefore turned every damaged
+	wall into a ghost — you would punch one hole and then fly through the whole
+	structure. Shell keeps walls solid; only rubble is pass-through.
 
-	Consequence worth knowing: once a part has been hit, the original is made
-	non-collidable and its shell takes over — so a damaged wall stops blocking
-	players entirely, while UNTOUCHED geometry (plain Default parts) still blocks
-	them. Intact = solid, damaged = fly-through.
+	Both voxel groups collide with Default and each other, so debris piles and
+	settles against the map normally.
 
 	Runs in Init, not Start: VoxelDestructionService builds its sim-part template
-	at require time and assigns CollisionGroup = "Voxels", so the group must exist
-	first. Core requires modules sorted by Priority then name, and
+	at require time and assigns CollisionGroup = "VoxelShell", so the group must
+	exist first. Core requires modules sorted by Priority then name, and
 	CollisionGroupManager sorts before VoxelDestructionService — but Init is the
 	safe place regardless, since every module is required before any Init runs.
 ]]
@@ -30,7 +31,10 @@ local CollisionGroupManager = {}
 
 local GROUP_DEFAULT = "Default"
 local GROUP_PLAYERS = "Players"
-local GROUP_VOXELS = "Voxels"
+-- Anchored voxels standing in for the intact remainder of a damaged part.
+local GROUP_VOXEL_SHELL = "VoxelShell"
+-- Unanchored launched rubble.
+local GROUP_VOXEL_DEBRIS = "VoxelDebris"
 
 local function ensureGroup(name: string)
 	for _, group in PhysicsService:GetRegisteredCollisionGroups() do
@@ -43,16 +47,26 @@ end
 
 function CollisionGroupManager:_setupGroups()
 	ensureGroup(GROUP_PLAYERS)
-	ensureGroup(GROUP_VOXELS)
+	ensureGroup(GROUP_VOXEL_SHELL)
+	ensureGroup(GROUP_VOXEL_DEBRIS)
 
 	PhysicsService:CollisionGroupSetCollidable(GROUP_PLAYERS, GROUP_DEFAULT, true)
 	PhysicsService:CollisionGroupSetCollidable(GROUP_PLAYERS, GROUP_PLAYERS, true)
 
-	-- The whole point of this module.
-	PhysicsService:CollisionGroupSetCollidable(GROUP_PLAYERS, GROUP_VOXELS, false)
+	-- Shell IS solid to players. The original part goes non-collidable on first
+	-- hit and the shell takes over collision, so making this false turns every
+	-- damaged wall into a ghost you fly straight through.
+	PhysicsService:CollisionGroupSetCollidable(GROUP_PLAYERS, GROUP_VOXEL_SHELL, true)
 
-	PhysicsService:CollisionGroupSetCollidable(GROUP_VOXELS, GROUP_DEFAULT, true)
-	PhysicsService:CollisionGroupSetCollidable(GROUP_VOXELS, GROUP_VOXELS, true)
+	-- Debris is not. Flying chunks should never body-block or shove the craft.
+	PhysicsService:CollisionGroupSetCollidable(GROUP_PLAYERS, GROUP_VOXEL_DEBRIS, false)
+
+	PhysicsService:CollisionGroupSetCollidable(GROUP_VOXEL_SHELL, GROUP_DEFAULT, true)
+	PhysicsService:CollisionGroupSetCollidable(GROUP_VOXEL_SHELL, GROUP_VOXEL_SHELL, true)
+	PhysicsService:CollisionGroupSetCollidable(GROUP_VOXEL_SHELL, GROUP_VOXEL_DEBRIS, true)
+
+	PhysicsService:CollisionGroupSetCollidable(GROUP_VOXEL_DEBRIS, GROUP_DEFAULT, true)
+	PhysicsService:CollisionGroupSetCollidable(GROUP_VOXEL_DEBRIS, GROUP_VOXEL_DEBRIS, true)
 end
 
 function CollisionGroupManager:SetCharacterGroup(character: Model)
