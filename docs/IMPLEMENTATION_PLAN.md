@@ -1,3 +1,25 @@
+# Status
+
+| Phase | State |
+|---|---|
+| 0 Repo + ported Core/voxel infrastructure | **done** |
+| 1 `FlightConfig`, `Net`, `FlightController` (6DOF) | **done** |
+| 2 `CameraController` (center-lock, roll-follow, speed FOV) | **done** |
+| 3 `FlightDestructionController` (client spherecast) + `FlightDestructionService` (server validate + carve) | **done** |
+| 4 Impact feel (shake, crash/tumble, SFX) | not started |
+| 5 Debug/tuning UI | not started |
+
+Decisions locked (2026-09-16): pure character movement (no craft model); client-owned
+spherecast detection → `Net.RequestCarve` → server carve; destructible geometry =
+descendants of `workspace.Map`; client-authoritative movement.
+
+All modules syntax-checked with `luau-compile` 0.738. Not playtested — that's yours.
+
+Controls: `F` toggle flight, mouse steers, `A`/`D` roll, `W`/`S` throttle,
+`Shift` boost, `Ctrl` air-brake, `Space` auto-level.
+
+---
+
 # Total Flight Destruction — Implementation Plan (rough draft)
 
 Scope of this draft: **flight + destruction only**. No progression, economy, UI polish, data saving, matchmaking.

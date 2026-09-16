@@ -34,9 +34,9 @@ local _voxelPhysicsEvent: RemoteEvent
 -- Names of Workspace folders whose descendants are destructible.
 -- Resolved lazily: a fresh place may not have these yet, and indexing
 -- workspace.<Name> at module load would hard-error.
+-- Keep in sync with FlightConfig.DestructibleContainers.
 local DESTRUCTIBLE_CONTAINER_NAMES = {
 	"Map",
-	"VoxelTest",
 }
 
 local DEFAULT_MIN_VOXEL_SIZE = 3

@@ -1,5 +1,6 @@
 {
   "name": "total flight destruction",
+  "globIgnorePaths": ["**/.gitkeep"],
   "tree": {
     "$className": "DataModel",
     "ReplicatedStorage": {

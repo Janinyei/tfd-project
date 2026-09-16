@@ -1,0 +1,138 @@
+--!strict
+--[[
+	FlightDestructionController  (client)
+
+	Owns impact DETECTION. The client spherecasts ahead of the craft each frame,
+	and when the probe hits destructible geometry it asks the server to carve
+	(Net.RequestCarve) and immediately applies its own speed loss.
+
+	Detection is client-side because:
+	  * movement is client-authoritative, so the client is the only place that
+	    knows the true sub-frame trajectory;
+	  * a server-side cast at 400+ studs/s is a frame or two stale, which at that
+	    speed is 10+ studs of error.
+
+	The server still owns the destruction itself and re-validates the request
+	against FlightConfig.Destruction (see FlightDestructionService).
+
+	Lead distance is speed-scaled: server destruction is not instant, so the hole
+	must be requested before the body reaches the wall.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Trove = require(ReplicatedStorage.Modules.Utils.Trove)
+
+local FlightDestructionController = {}
+
+local Core
+local Config
+local Net
+local Flight
+
+local lastCarveTime = 0
+local lastCarvePosition: Vector3? = nil
+
+local castParams: RaycastParams
+
+local function resolveContainers(names: { string }): { Instance }
+	local containers = {}
+	for _, name in names do
+		local container = workspace:FindFirstChild(name)
+		if container then
+			table.insert(containers, container)
+		end
+	end
+	return containers
+end
+
+function FlightDestructionController:_refreshCastParams()
+	castParams = RaycastParams.new()
+	castParams.FilterType = Enum.RaycastFilterType.Include
+	castParams.FilterDescendantsInstances = resolveContainers(Config.DestructibleContainers)
+	castParams.RespectCanCollide = false
+end
+
+function FlightDestructionController:_update(dt: number)
+	if not Flight:IsFlying() then
+		return
+	end
+
+	local root = Flight:GetRoot()
+	if not root or not root.Parent then
+		return
+	end
+
+	local destruction = Config.Destruction
+	local speed = Flight:GetSpeed()
+	if speed < destruction.MinCarveSpeed then
+		return
+	end
+
+	local now = os.clock()
+	if now - lastCarveTime < destruction.MinCarveInterval then
+		return
+	end
+
+	local direction = Flight:GetOrientation().LookVector
+	local leadDistance = math.max(speed * dt * destruction.LeadFactor, destruction.MinLeadDistance)
+
+	-- Voxel shells replace the original part with sim parts that live in a
+	-- non-replicating folder on the server, so the client's probe only ever sees
+	-- the map containers — no double-hitting our own debris.
+	local result = workspace:Spherecast(
+		root.Position,
+		destruction.ProbeRadius,
+		direction * leadDistance,
+		castParams
+	)
+
+	if not result then
+		return
+	end
+
+	local radius = Config.GetCarveRadius(speed)
+
+	-- Don't re-request a hole we just punched: consecutive frames inside the same
+	-- wall would otherwise spam identical carves.
+	if lastCarvePosition and (result.Position - lastCarvePosition).Magnitude < radius * 0.5 then
+		return
+	end
+
+	lastCarveTime = now
+	lastCarvePosition = result.Position
+
+	Net.RequestCarve:Fire(result.Position, radius, direction, speed)
+
+	-- Optimistic impact cost. Server owns destruction, client owns movement.
+	Flight:ApplySpeedLoss(destruction.SpeedLossPerCarve * radius + speed * destruction.SpeedLossSpeedScale)
+end
+
+function FlightDestructionController:Init(core)
+	Core = core
+	self._trove = Trove.new()
+end
+
+function FlightDestructionController:Start()
+	Config = Core:Get("FlightConfig")
+	Net = Core:Get("Net")
+	Flight = Core:Get("FlightController")
+
+	self:_refreshCastParams()
+
+	-- Map folders can be added after join (streaming, or the map being built in
+	-- Studio while the session runs), so the include list is rebuilt on change.
+	self._trove:Connect(workspace.ChildAdded, function()
+		self:_refreshCastParams()
+	end)
+	self._trove:Connect(workspace.ChildRemoved, function()
+		self:_refreshCastParams()
+	end)
+
+	self._trove:Connect(RunService.PostSimulation, function(dt)
+		self:_update(dt)
+	end)
+end
+
+return FlightDestructionController
