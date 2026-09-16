@@ -476,7 +476,15 @@ end
 ]]
 function FlightController:ApplySpeedLoss(amount: number)
 	local flight = Config.Flight
-	forwardSpeed = math.max(flight.MinSpeed, forwardSpeed - amount)
+
+	-- Bleed the MAGNITUDE toward zero rather than clamping against a floor.
+	-- Reverse is a negative forwardSpeed, so a floor would either be ignored in
+	-- reverse or, worse, accelerate a reversing craft forward on impact.
+	if forwardSpeed > 0 then
+		forwardSpeed = math.max(0, forwardSpeed - amount)
+	elseif forwardSpeed < 0 then
+		forwardSpeed = math.min(0, forwardSpeed + amount)
+	end
 
 	-- Lateral/vertical thrust bleeds too, or a sideways crash costs nothing.
 	local scale = math.max(0, 1 - amount / math.max(flight.MaxSpeed, 1))
