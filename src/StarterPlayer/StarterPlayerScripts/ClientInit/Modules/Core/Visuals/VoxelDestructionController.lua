@@ -47,7 +47,11 @@ local PHYSICS_UPDATE_BYTES = 21
 --------------------------------------------------------------------------------
 
 VoxelDestructionController.InterpolationEnabled = true
-VoxelDestructionController.ClientCollisionEnabled = true
+-- OFF: client voxels are cosmetic only. The server's sim parts own collision,
+-- and they sit in the "Voxels" group which cannot collide with players — a
+-- locally-collidable copy would reintroduce exactly the body-blocking this
+-- avoids, and only for the local player.
+VoxelDestructionController.ClientCollisionEnabled = false
 
 --------------------------------------------------------------------------------
 -- STATE

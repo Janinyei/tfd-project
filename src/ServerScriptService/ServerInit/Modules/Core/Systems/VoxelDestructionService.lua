@@ -68,7 +68,9 @@ local SIM_PART_CAPACITY = 4000
 
 local MAX_VOXEL_ID = 65535
 
-local SIM_COLLISION_GROUP = "Default"
+-- Registered by CollisionGroupManager, which disables Voxels <-> Players so
+-- neither the static shell nor flying debris can body-block a player.
+local SIM_COLLISION_GROUP = "Voxels"
 
 --------------------------------------------------------------------------------
 -- BUFFERS

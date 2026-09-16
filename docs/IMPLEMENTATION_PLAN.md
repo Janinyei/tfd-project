@@ -24,8 +24,19 @@ vendored `Utils/Quaternion.luau` were both deleted — dead weight, not insuranc
 
 All modules syntax-checked with `luau-compile` 0.738. Not playtested — that's yours.
 
-Controls: `F` toggle flight, mouse yaw/pitch, `W`/`S` throttle, `Q`/`E` hover up/down,
-`A`/`D` strafe, `Shift` boost, `Ctrl` air-brake.
+Controls: `F` toggle flight, mouse yaw/pitch, `W` throttle up, `S` throttle down and
+**past zero into reverse** (`ReverseMaxSpeed` 120, never boosted), `Q`/`E` hover up/down,
+`A`/`D` strafe, `Shift` boost, `Ctrl` air-brake (pulls toward zero from either direction).
+
+Collision: `CollisionGroupManager` registers `Players` + `Voxels` and disables the pair,
+so neither the static shell nor debris body-blocks a player. Client voxels are cosmetic
+(`ClientCollisionEnabled = false`). Net effect: intact geometry is solid, **damaged
+geometry is fly-through** for players (its original part goes non-collidable on first hit
+and the shell that replaces it is in `Voxels`).
+
+Constraint limits are finite on purpose — `MaxThrustForce` 45000, `AlignMaxTorque` 25000,
+`AlignResponsiveness` 35. Unlimited force/torque makes a collision with indestructible
+geometry a fight the constraints always win, which renders as the body convulsing.
 
 ---
 

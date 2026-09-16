@@ -15,7 +15,9 @@ local FlightConfig = {}
 FlightConfig.Flight = {
 	-- Forward speed (studs/s)
 	BaseSpeed = 60, -- speed the moment you enter flight
-	MinSpeed = 0, -- full stop allowed (hover in place)
+	-- S past zero flies backwards (reverse hover). Kept well below MaxSpeed:
+	-- reversing into a building you cannot see should not be a top-speed option.
+	ReverseMaxSpeed = 120,
 	MaxSpeed = 400,
 	BoostMaxSpeed = 700,
 
@@ -59,9 +61,14 @@ FlightConfig.Flight = {
 	-- Low = heavy craft with rotational inertia, high = instant snap.
 	RateResponse = 9,
 
-	-- Constraint strengths
-	AlignResponsiveness = 60,
-	AlignMaxTorque = 1e6,
+	-- Constraint strengths. Both are DELIBERATELY finite: with unlimited force and
+	-- 1e6 torque, hitting an indestructible wall makes the constraints win the
+	-- argument against the collision and the body snaps/spins violently. Capped,
+	-- the wall wins, the craft mushes into it and recovers.
+	AlignResponsiveness = 35,
+	AlignMaxTorque = 25000,
+	-- Cap on the thrust force LinearVelocity may apply to hold target velocity.
+	MaxThrustForce = 45000,
 
 	ToggleKey = Enum.KeyCode.F,
 	BoostKey = Enum.KeyCode.LeftShift,

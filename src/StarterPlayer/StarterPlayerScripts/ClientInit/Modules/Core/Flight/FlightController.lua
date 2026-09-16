@@ -127,11 +127,17 @@ function FlightController:_buildRig(): boolean
 
 	-- Velocity is SET, not integrated from forces: no fighting gravity, no
 	-- accumulated error, and the physics engine still owns collisions.
+	--
+	-- Force IS limited though. Unlimited force means slamming an indestructible
+	-- wall becomes a fight the constraint always wins, which reads as the body
+	-- convulsing against the surface. Capped, the collision wins and the craft
+	-- just stops.
 	local lv = Instance.new("LinearVelocity")
 	lv.Name = "FlightVelocity"
 	lv.Attachment0 = attachment
 	lv.RelativeTo = Enum.ActuatorRelativeTo.World
-	lv.ForceLimitsEnabled = false
+	lv.ForceLimitsEnabled = true
+	lv.MaxAxesForce = Vector3.one * Config.Flight.MaxThrustForce
 	lv.VelocityConstraintMode = Enum.VelocityConstraintMode.Vector
 	lv.VectorVelocity = Vector3.zero
 	lv.Parent = root
@@ -282,13 +288,23 @@ function FlightController:_integrateThrust(dt: number)
 		forwardSpeed -= flight.ThrottleDecel * dt
 	end
 
+	-- Air-brake pulls toward zero from EITHER direction. If it just subtracted, it
+	-- would accelerate you backwards once past zero, which is not a brake.
 	if braking then
-		forwardSpeed -= flight.BrakeDecel * dt
+		local step = flight.BrakeDecel * dt
+		if forwardSpeed > 0 then
+			forwardSpeed = math.max(0, forwardSpeed - step)
+		elseif forwardSpeed < 0 then
+			forwardSpeed = math.min(0, forwardSpeed + step)
+		end
 	end
 
-	-- Passive drag, proportional to speed.
+	-- Passive drag, proportional to speed — signed, so it decays reverse too.
 	forwardSpeed -= forwardSpeed * flight.Drag * dt
-	forwardSpeed = math.clamp(forwardSpeed, flight.MinSpeed, maxSpeed)
+
+	-- S past zero reverses. Reverse has its own, much lower ceiling and is never
+	-- boosted: backing up at 700 studs/s is not a control scheme.
+	forwardSpeed = math.clamp(forwardSpeed, -flight.ReverseMaxSpeed, maxSpeed)
 
 	-- Q climbs, E descends. Independent of throttle so you can hover-climb.
 	hoverSpeed = approachThrust(
