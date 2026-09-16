@@ -128,17 +128,23 @@ function FlightController:_buildRig(): boolean
 	-- Velocity is SET, not integrated from forces: no fighting gravity, no
 	-- accumulated error, and the physics engine still owns collisions.
 	--
-	-- Force IS limited though. Unlimited force means slamming an indestructible
-	-- wall becomes a fight the constraint always wins, which reads as the body
-	-- convulsing against the surface. Capped, the collision wins and the craft
-	-- just stops.
+	-- Force IS limited, so slamming indestructible geometry is a fight the
+	-- collision wins instead of the constraint — unlimited force reads as the
+	-- body convulsing against the surface.
+	--
+	-- The limit MUST be the scalar MaxForce with ForceLimitMode.Magnitude.
+	-- MaxAxesForce is ignored unless ForceLimitMode is PerAxis, so setting only
+	-- MaxAxesForce leaves the effective cap at MaxForce's default and the
+	-- constraint cannot even hold altitude against gravity. Magnitude is also
+	-- the right model here: thrust should cap isotropically, not per world axis.
 	local lv = Instance.new("LinearVelocity")
 	lv.Name = "FlightVelocity"
 	lv.Attachment0 = attachment
 	lv.RelativeTo = Enum.ActuatorRelativeTo.World
-	lv.ForceLimitsEnabled = true
-	lv.MaxAxesForce = Vector3.one * Config.Flight.MaxThrustForce
 	lv.VelocityConstraintMode = Enum.VelocityConstraintMode.Vector
+	lv.ForceLimitsEnabled = true
+	lv.ForceLimitMode = Enum.ForceLimitMode.Magnitude
+	lv.MaxForce = Config.Flight.MaxThrustForce
 	lv.VectorVelocity = Vector3.zero
 	lv.Parent = root
 	rigTrove:Add(lv)
@@ -352,7 +358,7 @@ function FlightController:_update(dt: number)
 	-- the debug panel's sliders take effect without re-toggling flight. Three
 	-- property writes; irrelevant next to the physics step.
 	if linearVelocity then
-		linearVelocity.MaxAxesForce = Vector3.one * Config.Flight.MaxThrustForce
+		linearVelocity.MaxForce = Config.Flight.MaxThrustForce
 		linearVelocity.VectorVelocity = velocity
 	end
 	if alignOrientation then
