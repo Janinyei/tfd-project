@@ -68,7 +68,7 @@ FlightConfig.Flight = {
 	AlignResponsiveness = 35,
 	AlignMaxTorque = 25000,
 	-- Cap on the thrust force LinearVelocity may apply to hold target velocity.
-	MaxThrustForce = 45000,
+	MaxThrustForce = 999999999999999,
 
 	ToggleKey = Enum.KeyCode.F,
 	BoostKey = Enum.KeyCode.LeftShift,

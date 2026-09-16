@@ -35,6 +35,24 @@ local lastCarveTime = 0
 local lastCarvePosition: Vector3? = nil
 
 local castParams: RaycastParams
+--[[
+	Last probe + carve, for the debug gizmos. Written every frame the probe runs
+	so DebugController can draw exactly what the detector saw, rather than
+	recomputing (and possibly disagreeing with) it.
+]]
+local probeDebug = {
+	Active = false,
+	Origin = Vector3.zero,
+	Direction = Vector3.zAxis,
+	Lead = 0,
+	ProbeRadius = 0,
+	HitPosition = nil :: Vector3?,
+	HitNormal = nil :: Vector3?,
+	CarvePosition = nil :: Vector3?,
+	CarveRadius = 0,
+	CarveClock = 0,
+	CarveCount = 0,
+}
 
 local function resolveContainers(names: { string }): { Instance }
 	local containers = {}
@@ -55,6 +73,8 @@ function FlightDestructionController:_refreshCastParams()
 end
 
 function FlightDestructionController:_update(dt: number)
+	probeDebug.Active = false
+
 	if not Flight:IsFlying() then
 		return
 	end
@@ -75,13 +95,19 @@ function FlightDestructionController:_update(dt: number)
 		return
 	end
 
-	local now = os.clock()
-	if now - lastCarveTime < destruction.MinCarveInterval then
-		return
-	end
-
 	local direction = travel / speed
 	local leadDistance = math.max(speed * dt * destruction.LeadFactor, destruction.MinLeadDistance)
+
+	-- Probe geometry is recorded BEFORE the rate-limit/dedupe bails, so the
+	-- gizmos show the cast that is actually happening every frame, not only the
+	-- frames that produced a carve.
+	probeDebug.Active = true
+	probeDebug.Origin = root.Position
+	probeDebug.Direction = direction
+	probeDebug.Lead = leadDistance
+	probeDebug.ProbeRadius = destruction.ProbeRadius
+	probeDebug.HitPosition = nil
+	probeDebug.HitNormal = nil
 
 	-- Voxel shells replace the original part with sim parts that live in a
 	-- non-replicating folder on the server, so the client's probe only ever sees
@@ -97,6 +123,14 @@ function FlightDestructionController:_update(dt: number)
 		return
 	end
 
+	probeDebug.HitPosition = result.Position
+	probeDebug.HitNormal = result.Normal
+
+	local now = os.clock()
+	if now - lastCarveTime < destruction.MinCarveInterval then
+		return
+	end
+
 	local radius = Config.GetCarveRadius(speed)
 
 	-- Don't re-request a hole we just punched: consecutive frames inside the same
@@ -108,10 +142,20 @@ function FlightDestructionController:_update(dt: number)
 	lastCarveTime = now
 	lastCarvePosition = result.Position
 
+	probeDebug.CarvePosition = result.Position
+	probeDebug.CarveRadius = radius
+	probeDebug.CarveClock = now
+	probeDebug.CarveCount += 1
+
 	Net.RequestCarve:Fire(result.Position, radius, direction, speed)
 
 	-- Optimistic impact cost. Server owns destruction, client owns movement.
 	Flight:ApplySpeedLoss(destruction.SpeedLossPerCarve * radius + speed * destruction.SpeedLossSpeedScale)
+end
+
+-- Live snapshot for DebugController's gizmos and readouts.
+function FlightDestructionController:GetProbeDebug()
+	return probeDebug
 end
 
 function FlightDestructionController:Init(core)

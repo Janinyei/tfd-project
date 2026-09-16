@@ -348,10 +348,16 @@ function FlightController:_update(dt: number)
 		+ orientation.RightVector * strafeSpeed
 		+ Vector3.yAxis * hoverSpeed
 
+	-- Constraint strengths are re-pushed every frame, not just at rig build, so
+	-- the debug panel's sliders take effect without re-toggling flight. Three
+	-- property writes; irrelevant next to the physics step.
 	if linearVelocity then
+		linearVelocity.MaxAxesForce = Vector3.one * Config.Flight.MaxThrustForce
 		linearVelocity.VectorVelocity = velocity
 	end
 	if alignOrientation then
+		alignOrientation.Responsiveness = Config.Flight.AlignResponsiveness
+		alignOrientation.MaxTorque = Config.Flight.AlignMaxTorque
 		alignOrientation.CFrame = orientation
 	end
 end

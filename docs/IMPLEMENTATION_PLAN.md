@@ -7,7 +7,22 @@
 | 2 `CameraController` (center-lock, chase, speed FOV) | **done** |
 | 3 `FlightDestructionController` (client spherecast) + `FlightDestructionService` (server validate + carve) | **done** |
 | 4 Impact feel (shake, crash/tumble, SFX) | not started |
-| 5 Debug/tuning UI | not started |
+| 5 Debug panel + gizmos (`Interface/DebugController.lua`) | **done** |
+
+Debug: `9` toggles the Iris panel. Live knobs = `MaxSpeed`, `MaxThrustForce` (written
+straight into `FlightConfig`, re-pushed to the constraints every frame so they apply
+without re-toggling flight) plus a `Gizmos` checkbox. Readouts: flying state, forward vs.
+travel speed, velocity, pitch/yaw, probe state, lead distance, carve count, carve radius
+and voxel size at current travel speed.
+
+Gizmos (CeiveImGizmo, vendored `Utils/Gizmo/`): cyan velocity arrow, white spherecast ray,
+yellow probe sphere at the cast end, green hit normal, red carve sphere lingering 0.5s.
+Immediate-mode — redrawn every `RenderStepped`, since the library clears one tick after
+any draw.
+
+Destruction knobs are deliberately NOT sliders yet: `FlightDestructionService` re-derives
+them server-side, so they need a Studio-gated mirror packet. That ships with the Tier-3
+knobs — a slider that silently does nothing is worse than no slider.
 
 Decisions locked (2026-09-16): pure character movement (no craft model); client-owned
 spherecast detection → `Net.RequestCarve` → server carve; destructible geometry =
