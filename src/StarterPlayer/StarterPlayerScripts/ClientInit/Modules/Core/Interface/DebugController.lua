@@ -45,6 +45,12 @@ local Destruction
 DebugController.Enabled = false
 DebugController.GizmosEnabled = true
 
+-- Smoothed frame stats. Raw 1/dt jitters far too much to read, so both are
+-- exponentially smoothed; FrameSmoothing is the response in Hz.
+local FRAME_SMOOTHING = 6
+local fps = 0
+local frameMs = 0
+
 local TOGGLE_KEY = Enum.KeyCode.Nine
 
 -- Iris.Init() is a one-shot per client. Guarded the same way both other repos
@@ -155,6 +161,11 @@ function DebugController:_render()
 		position = Iris.State(Vector2.new(20, 20)),
 	})
 
+	Iris.SeparatorText({ "Performance" })
+	line("FPS", fps)
+	line("Frame (ms)", frameMs)
+	line("Ping (ms)", player:GetNetworkPing() * 1000)
+
 	Iris.SeparatorText({ "Knobs" })
 
 	-- Iris states persist per widget across frames, so the slider keeps the value
@@ -191,7 +202,6 @@ function DebugController:_render()
 	line("Probing", probe.Active)
 	line("Over speed gate", velocity.Magnitude >= Config.Destruction.MinCarveSpeed)
 	line("Speed gate", Config.Destruction.MinCarveSpeed)
-	line("Ping (ms)", player:GetNetworkPing() * 1000)
 	line("Lead distance", probe.Lead)
 	line("Probe radius", probe.ProbeRadius)
 	line("Hit", probe.HitPosition)
@@ -253,7 +263,16 @@ function DebugController:Start()
 	-- within one signal follows Core's module load order (DebugController sorts
 	-- before FlightDestructionController), so this handler would run BEFORE the
 	-- probe updated and always show stale data.
-	self._trove:Connect(RunService.RenderStepped, function()
+	self._trove:Connect(RunService.RenderStepped, function(dt)
+		-- Sampled unconditionally: the numbers must already be settled when the
+		-- panel is opened, and measuring only while it is open would also hide
+		-- the cost of the panel itself.
+		if dt > 0 then
+			local alpha = 1 - math.exp(-FRAME_SMOOTHING * dt)
+			fps += (1 / dt - fps) * alpha
+			frameMs += (dt * 1000 - frameMs) * alpha
+		end
+
 		local drawing = self.Enabled and self.GizmosEnabled
 		if Gizmo.Enabled ~= drawing then
 			Gizmo.SetEnabled(drawing)
