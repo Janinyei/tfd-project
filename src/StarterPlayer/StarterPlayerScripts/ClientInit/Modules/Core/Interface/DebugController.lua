@@ -170,6 +170,7 @@ function DebugController:_render()
 
 	Iris.SeparatorText({ "Flight" })
 	line("Flying", Flight:IsFlying())
+	line("Mouse captured [8]", Flight:IsMouseLocked())
 	line("Forward speed", Flight:GetSpeed())
 	local velocity = Flight:GetVelocity()
 	line("Travel speed", velocity.Magnitude)

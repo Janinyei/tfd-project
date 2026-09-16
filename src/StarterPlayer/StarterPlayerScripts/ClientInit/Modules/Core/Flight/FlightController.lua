@@ -57,6 +57,11 @@ local pitchRate, yawRate = 0, 0
 -- Mouse delta accumulated since last frame
 local mouseDeltaX, mouseDeltaY = 0, 0
 
+-- Mouse capture. Unlocking frees the cursor for the debug panel; while unlocked
+-- the craft ignores mouse motion entirely, otherwise reaching for a slider
+-- would spin the nose.
+local mouseLocked = true
+
 -- Rig
 local character: Model? = nil
 local root: BasePart? = nil
@@ -197,6 +202,7 @@ function FlightController:StartFlight()
 	velocity = Vector3.zero
 	pitchRate, yawRate = 0, 0
 	mouseDeltaX, mouseDeltaY = 0, 0
+	mouseLocked = true
 
 	if not self:_buildRig() then
 		return
@@ -212,6 +218,11 @@ function FlightController:StopFlight()
 	end
 	flying = false
 	self:_teardownRig()
+
+	-- _update no longer runs, so nothing would restore these: the cursor would
+	-- stay captured and invisible on the ground.
+	UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+	UserInputService.MouseIconEnabled = true
 
 	if humanoid then
 		humanoid.PlatformStand = false
@@ -344,9 +355,12 @@ function FlightController:_update(dt: number)
 	self:_steer(dt)
 	self:_integrateThrust(dt)
 
-	-- Mouse stays locked to screen centre while flying. Re-asserted every frame:
-	-- the PlayerModule resets MouseBehavior on respawn and on input-mode changes.
-	UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+	-- Re-asserted every frame: the PlayerModule resets MouseBehavior on respawn
+	-- and on input-mode changes. Skipped while unlocked so the cursor stays free
+	-- for the debug panel.
+	UserInputService.MouseBehavior = if mouseLocked
+		then Enum.MouseBehavior.LockCenter
+		else Enum.MouseBehavior.Default
 
 	-- Hover thrust is world-vertical, not craft-relative: pitching the nose up
 	-- must not turn "climb" into "climb and drift backwards".
@@ -394,6 +408,24 @@ function FlightController:GetRoot(): BasePart?
 	return root
 end
 
+function FlightController:IsMouseLocked(): boolean
+	return mouseLocked
+end
+
+--[[
+	Free or recapture the cursor. Pending mouse delta is dropped on every
+	transition: deltas accumulated while the cursor was travelling to a slider
+	must not be applied to the craft when capture resumes.
+]]
+function FlightController:SetMouseLocked(locked: boolean)
+	mouseLocked = locked
+	mouseDeltaX, mouseDeltaY = 0, 0
+end
+
+function FlightController:ToggleMouseLock()
+	self:SetMouseLocked(not mouseLocked)
+end
+
 --[[
 	Bleed speed off — called by FlightDestructionController when the craft
 	punches through geometry. Client-authoritative movement means the client
@@ -434,11 +466,13 @@ function FlightController:Start()
 		end
 		if input.KeyCode == Config.Flight.ToggleKey then
 			self:Toggle()
+		elseif input.KeyCode == Config.Flight.MouseUnlockKey then
+			self:ToggleMouseLock()
 		end
 	end)
 
 	self._trove:Connect(UserInputService.InputChanged, function(input, processed)
-		if processed or not flying then
+		if processed or not flying or not mouseLocked then
 			return
 		end
 		if input.UserInputType == Enum.UserInputType.MouseMovement then

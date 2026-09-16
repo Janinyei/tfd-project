@@ -79,6 +79,8 @@ FlightConfig.Flight = {
 	StrafeRightKey = Enum.KeyCode.D,
 	HoverUpKey = Enum.KeyCode.Q,
 	HoverDownKey = Enum.KeyCode.E,
+	-- Frees the cursor so the debug panel (key 9) is clickable while flying.
+	MouseUnlockKey = Enum.KeyCode.Eight,
 }
 
 FlightConfig.Camera = {

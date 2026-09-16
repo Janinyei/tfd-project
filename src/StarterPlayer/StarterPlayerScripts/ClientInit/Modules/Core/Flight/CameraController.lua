@@ -69,7 +69,9 @@ function CameraController:_update(dt: number)
 	-- Re-asserted every frame: the PlayerModule resets CameraType on respawn and
 	-- on input-mode changes, and silently steals the camera back if we don't.
 	camera.CameraType = Enum.CameraType.Scriptable
-	UserInputService.MouseIconEnabled = false
+	-- Cursor is hidden only while the mouse is captured; with capture released
+	-- (key 8) it must be visible to aim at the debug panel.
+	UserInputService.MouseIconEnabled = not Flight:IsMouseLocked()
 
 	-- Craft rotation has zero roll and clamped pitch, so it is used directly.
 	local targetRotation = Flight:GetOrientation()
