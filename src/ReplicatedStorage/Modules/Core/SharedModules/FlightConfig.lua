@@ -39,34 +39,17 @@ FlightConfig.Flight = {
 	StrafeAccel = 300,
 	StrafeDecel = 260,
 
-	-- Angular rates (radians/s) at full mouse deflection. No roll axis: the craft
-	-- stays level on Z, which is what makes the clamped-pitch model readable.
-	PitchRate = 1.9,
-	YawRate = 2.2,
-
 	-- Pitch is HARD CLAMPED, in degrees. Staying well clear of +-90 is what
 	-- removes the gimbal/singularity problem entirely: yaw and pitch can be
 	-- plain scalars, no quaternions or CFrame-delta integration needed.
 	MinPitch = -55, -- nose down
 	MaxPitch = 55, -- nose up
 
-	-- Mouse steering. Pixel delta is divided by MouseFullDeflection to get a
-	-- [-1, 1] stick value, then scaled by MouseGain and the user's
-	-- MouseDeltaSensitivity setting.
-	MouseGain = 1.0,
-	-- Pixel delta per frame that counts as "full stick". Larger = less twitchy.
-	MouseFullDeflection = 14,
-
-	-- Exponential smoothing on angular rates: 1 - exp(-Response * dt).
-	-- Low = heavy craft with rotational inertia, high = instant snap.
-	RateResponse = 9,
-
-	-- Constraint strengths. Both are DELIBERATELY finite: with unlimited force and
-	-- 1e6 torque, hitting an indestructible wall makes the constraints win the
-	-- argument against the collision and the body snaps/spins violently. Capped,
-	-- the wall wins, the craft mushes into it and recovers.
-	AlignResponsiveness = 35,
-	AlignMaxTorque = 25000,
+	-- Aim-style steering: RADIANS PER PIXEL of mouse delta, multiplied by the
+	-- user's MouseDeltaSensitivity. There is intentionally no speed term and no
+	-- rate smoothing anywhere, so the turn rate is identical at every speed and
+	-- the nose is wherever you aimed it the same frame.
+	MouseSensitivity = 0.006,
 	-- Cap on the thrust force LinearVelocity may apply to hold target velocity.
 	MaxThrustForce = 999999999999999,
 
@@ -95,7 +78,10 @@ FlightConfig.Camera = {
 
 	-- Exponential smoothing of the camera's orientation toward the craft's, so the
 	-- camera lags slightly instead of being welded to the nose.
-	OrientationResponse = 12,
+	-- Kept high now that the craft snaps to aim: a slow camera would reintroduce
+	-- exactly the steering lag the rigid align removed. Lower it only for a
+	-- deliberately loose, heavy-camera feel.
+	OrientationResponse = 30,
 
 	BaseFov = 70,
 	MaxFov = 105,

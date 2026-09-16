@@ -53,8 +53,6 @@ local strafeSpeed = 0 -- signed, +right
 local hoverSpeed = 0 -- signed, +up
 local velocity = Vector3.zero -- last applied world velocity
 
--- Smoothed angular rates (rad/s)
-local pitchRate, yawRate = 0, 0
 -- Mouse delta accumulated since last frame
 local mouseDeltaX, mouseDeltaY = 0, 0
 
@@ -164,10 +162,12 @@ function FlightController:_buildRig(): boolean
 	ao.Name = "FlightOrientation"
 	ao.Attachment0 = attachment
 	ao.Mode = Enum.OrientationAlignmentMode.OneAttachment
-	ao.RigidityEnabled = false
+	-- Rigid: the body matches the commanded orientation the same frame, so the
+	-- craft always points exactly where you are aiming. With a torque-limited
+	-- align, catching up took longer than the turn itself at high speed, which
+	-- is what read as "turning gets harder the faster you go".
+	ao.RigidityEnabled = true
 	ao.ReactionTorqueEnabled = false
-	ao.Responsiveness = Config.Flight.AlignResponsiveness
-	ao.MaxTorque = Config.Flight.AlignMaxTorque
 	ao.CFrame = orientation
 	ao.Parent = root
 	rigTrove:Add(ao)
@@ -206,7 +206,6 @@ function FlightController:StartFlight()
 	forwardSpeed = math.max(flight.BaseSpeed, root.AssemblyLinearVelocity.Magnitude)
 	strafeSpeed, hoverSpeed = 0, 0
 	velocity = Vector3.zero
-	pitchRate, yawRate = 0, 0
 	mouseDeltaX, mouseDeltaY = 0, 0
 	mouseLocked = true
 
@@ -264,37 +263,30 @@ end
 -- PER-FRAME
 --------------------------------------------------------------------------------
 
-function FlightController:_steer(dt: number)
+--[[
+	Aim-style steering: mouse delta maps DIRECTLY to a yaw/pitch delta, with no
+	rate smoothing and no speed term anywhere. Turn rate is therefore identical
+	at 60 and at 700 studs/s, and the nose stops the instant the mouse stops.
+
+	Deliberately not rate-smoothed: exponential smoothing added lag that felt
+	like "turning gets heavier with speed" even though the rate was constant,
+	because the lag stayed fixed while the distance covered during it grew.
+]]
+function FlightController:_steer(_dt: number)
 	local flight = Config.Flight
 
-	-- Pixel delta normalized against MouseFullDeflection = the delta that counts
-	-- as full stick, so the result is a clean [-1, 1] stick value regardless of DPI.
 	-- Mouse right (+X) yaws right, which is NEGATIVE rotation about +Y.
 	-- Mouse up (-Y) pitches up, which is POSITIVE rotation about +X.
-	local gain = flight.MouseGain * UserInputService.MouseDeltaSensitivity / flight.MouseFullDeflection
+	-- Scaled in radians per pixel, so this is aim, not a joystick deflection.
+	local gain = flight.MouseSensitivity * UserInputService.MouseDeltaSensitivity
 
-	local yawInput = math.clamp(-mouseDeltaX * gain, -1, 1)
-	local pitchInput = math.clamp(-mouseDeltaY * gain, -1, 1)
-	mouseDeltaX, mouseDeltaY = 0, 0
-
-	local alpha = ease(flight.RateResponse, dt)
-	yawRate += (yawInput * flight.YawRate - yawRate) * alpha
-	pitchRate += (pitchInput * flight.PitchRate - pitchRate) * alpha
-
-	yaw += yawRate * dt
+	yaw -= mouseDeltaX * gain
 	pitch = math.clamp(
-		pitch + pitchRate * dt,
+		pitch - mouseDeltaY * gain,
 		math.rad(flight.MinPitch),
 		math.rad(flight.MaxPitch)
 	)
-
-	-- Kill the rate once clamped, otherwise the stick "charges up" against the
-	-- limit and the nose snaps when you steer back.
-	if pitch <= math.rad(flight.MinPitch) and pitchRate < 0 then
-		pitchRate = 0
-	elseif pitch >= math.rad(flight.MaxPitch) and pitchRate > 0 then
-		pitchRate = 0
-	end
+	mouseDeltaX, mouseDeltaY = 0, 0
 
 	-- Roll is always 0: with pitch clamped inside +-90 this is singularity-free.
 	orientation = CFrame.fromEulerAnglesYXZ(pitch, yaw, 0)
@@ -424,8 +416,6 @@ function FlightController:_update(dt: number)
 		linearVelocity.VectorVelocity = velocity
 	end
 	if alignOrientation then
-		alignOrientation.Responsiveness = Config.Flight.AlignResponsiveness
-		alignOrientation.MaxTorque = Config.Flight.AlignMaxTorque
 		alignOrientation.CFrame = orientation
 	end
 end
