@@ -65,7 +65,12 @@ function FlightDestructionController:_update(dt: number)
 	end
 
 	local destruction = Config.Destruction
-	local speed = Flight:GetSpeed()
+
+	-- Speed here is the TRAVEL speed, not the forward throttle: strafing or
+	-- hover-climbing into a wall must carve too, and the probe must point where
+	-- the craft is actually going.
+	local travel = Flight:GetVelocity()
+	local speed = travel.Magnitude
 	if speed < destruction.MinCarveSpeed then
 		return
 	end
@@ -75,7 +80,7 @@ function FlightDestructionController:_update(dt: number)
 		return
 	end
 
-	local direction = Flight:GetOrientation().LookVector
+	local direction = travel / speed
 	local leadDistance = math.max(speed * dt * destruction.LeadFactor, destruction.MinLeadDistance)
 
 	-- Voxel shells replace the original part with sim parts that live in a

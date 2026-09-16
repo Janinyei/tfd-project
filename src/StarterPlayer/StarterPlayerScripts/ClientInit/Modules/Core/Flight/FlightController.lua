@@ -2,21 +2,28 @@
 --[[
 	FlightController  (client)
 
-	Omnidirectional 6DOF character flight.
+	Classic hover-flight, NOT omnidirectional:
+	  * mouse yaws freely and pitches within a hard clamp (MinPitch/MaxPitch);
+	  * no roll axis — the craft stays level on Z;
+	  * Q / E apply vertical hover thrust, independent of forward throttle;
+	  * A / D strafe laterally without rotating;
+	  * W / S throttle forward speed, Shift boosts, Ctrl air-brakes.
 
-	GIMBAL LOCK: orientation is stored as a CFrame rotation and integrated with
-	body-relative deltas — never as (pitch, yaw, roll) rebuilt through
-	CFrame.Angles. Euler STORAGE is what produces gimbal lock; rotation
-	composition has no singularity. :Orthonormalize() each frame kills float drift.
+	NO GIMBAL LOCK BY CONSTRUCTION: pitch is clamped well clear of +-90 and roll
+	is always zero, so orientation is just two scalars fed to
+	CFrame.fromEulerAnglesYXZ. The singularity that motivates quaternions only
+	exists when pitch can reach straight up/down; clamping removes it rather than
+	papering over it.
 
 	Movement is client-authoritative (network ownership of the HumanoidRootPart).
 	Anything else feels unusable at 400+ studs/s.
 
 	Public API (read by CameraController and FlightDestructionController):
-		:IsFlying()      -> boolean
-		:GetOrientation()-> CFrame   (rotation only)
-		:GetSpeed()      -> number
-		:GetRoot()       -> BasePart?
+		:IsFlying()       -> boolean
+		:GetOrientation() -> CFrame  (rotation only, no roll)
+		:GetSpeed()       -> number  (forward speed only)
+		:GetVelocity()    -> Vector3 (forward + strafe + hover, world space)
+		:GetRoot()        -> BasePart?
 		:ApplySpeedLoss(amount)
 ]]
 
@@ -36,11 +43,17 @@ local Config
 
 -- Live state
 local flying = false
-local orientation = CFrame.identity -- rotation only
-local speed = 0
+local yaw = 0 -- radians, unbounded (wraps naturally)
+local pitch = 0 -- radians, clamped to [MinPitch, MaxPitch]
+local orientation = CFrame.identity -- rebuilt from yaw/pitch each frame
+
+local forwardSpeed = 0
+local strafeSpeed = 0 -- signed, +right
+local hoverSpeed = 0 -- signed, +up
+local velocity = Vector3.zero -- last applied world velocity
 
 -- Smoothed angular rates (rad/s)
-local pitchRate, yawRate, rollRate = 0, 0, 0
+local pitchRate, yawRate = 0, 0
 -- Mouse delta accumulated since last frame
 local mouseDeltaX, mouseDeltaY = 0, 0
 
@@ -70,6 +83,30 @@ local function axis(negative: Enum.KeyCode, positive: Enum.KeyCode): number
 		value += 1
 	end
 	return value
+end
+
+--[[
+	Drive a thrust axis toward `input * maxSpeed`: accelerate while held, decay
+	toward zero when released. Keeps hover/strafe from snapping on and off.
+]]
+local function approachThrust(
+	current: number,
+	input: number,
+	maxSpeed: number,
+	accel: number,
+	decel: number,
+	dt: number
+): number
+	local target = input * maxSpeed
+	local rate = (input == 0) and decel or accel
+	local step = rate * dt
+
+	if current < target then
+		return math.min(current + step, target)
+	elseif current > target then
+		return math.max(current - step, target)
+	end
+	return current
 end
 
 --------------------------------------------------------------------------------
@@ -135,9 +172,18 @@ function FlightController:StartFlight()
 		return
 	end
 
-	orientation = root.CFrame.Rotation
-	speed = math.max(Config.Flight.BaseSpeed, root.AssemblyLinearVelocity.Magnitude)
-	pitchRate, yawRate, rollRate = 0, 0, 0
+	local flight = Config.Flight
+
+	-- Inherit heading, drop any roll, clamp inherited pitch into the legal band.
+	local rx, ry = root.CFrame:ToEulerAnglesYXZ()
+	yaw = ry
+	pitch = math.clamp(rx, math.rad(flight.MinPitch), math.rad(flight.MaxPitch))
+	orientation = CFrame.fromEulerAnglesYXZ(pitch, yaw, 0)
+
+	forwardSpeed = math.max(flight.BaseSpeed, root.AssemblyLinearVelocity.Magnitude)
+	strafeSpeed, hoverSpeed = 0, 0
+	velocity = Vector3.zero
+	pitchRate, yawRate = 0, 0
 	mouseDeltaX, mouseDeltaY = 0, 0
 
 	if not self:_buildRig() then
@@ -184,12 +230,11 @@ end
 -- PER-FRAME
 --------------------------------------------------------------------------------
 
-function FlightController:_readSteering(dt: number)
+function FlightController:_steer(dt: number)
 	local flight = Config.Flight
 
-	-- Mouse steers the craft (the camera only follows). Pixel delta is normalized
-	-- against MouseFullDeflection = the delta that counts as full stick, so the
-	-- result is a clean [-1, 1] stick value regardless of DPI.
+	-- Pixel delta normalized against MouseFullDeflection = the delta that counts
+	-- as full stick, so the result is a clean [-1, 1] stick value regardless of DPI.
 	-- Mouse right (+X) yaws right, which is NEGATIVE rotation about +Y.
 	-- Mouse up (-Y) pitches up, which is POSITIVE rotation about +X.
 	local gain = flight.MouseGain * UserInputService.MouseDeltaSensitivity / flight.MouseFullDeflection
@@ -198,40 +243,30 @@ function FlightController:_readSteering(dt: number)
 	local pitchInput = math.clamp(-mouseDeltaY * gain, -1, 1)
 	mouseDeltaX, mouseDeltaY = 0, 0
 
-	-- A rolls left, D rolls right.
-	local rollInput = axis(flight.RollRightKey, flight.RollLeftKey)
-
-	local targetPitch = pitchInput * flight.PitchRate
-	local targetYaw = yawInput * flight.YawRate
-	local targetRoll = rollInput * flight.RollRate
-
 	local alpha = ease(flight.RateResponse, dt)
-	pitchRate += (targetPitch - pitchRate) * alpha
-	yawRate += (targetYaw - yawRate) * alpha
-	rollRate += (targetRoll - rollRate) * alpha
-end
+	yawRate += (yawInput * flight.YawRate - yawRate) * alpha
+	pitchRate += (pitchInput * flight.PitchRate - pitchRate) * alpha
 
-function FlightController:_integrateOrientation(dt: number)
-	-- Body-relative composition: no Euler state, therefore no gimbal lock.
-	local delta = CFrame.fromAxisAngle(Vector3.xAxis, pitchRate * dt)
-		* CFrame.fromAxisAngle(Vector3.yAxis, yawRate * dt)
-		* CFrame.fromAxisAngle(Vector3.zAxis, rollRate * dt)
+	yaw += yawRate * dt
+	pitch = math.clamp(
+		pitch + pitchRate * dt,
+		math.rad(flight.MinPitch),
+		math.rad(flight.MaxPitch)
+	)
 
-	orientation = (orientation * delta):Orthonormalize()
-
-	-- Auto-level: slerp toward the current heading flattened to the horizon.
-	-- CFrame:Lerp slerps the rotation component, so this is singularity-free too.
-	if UserInputService:IsKeyDown(Config.Flight.AutoLevelKey) then
-		local look = orientation.LookVector
-		local flat = Vector3.new(look.X, 0, look.Z)
-		if flat.Magnitude > 1e-3 then
-			local level = CFrame.lookAt(Vector3.zero, flat.Unit).Rotation
-			orientation = orientation:Lerp(level, ease(Config.Flight.AutoLevelRate, dt)):Orthonormalize()
-		end
+	-- Kill the rate once clamped, otherwise the stick "charges up" against the
+	-- limit and the nose snaps when you steer back.
+	if pitch <= math.rad(flight.MinPitch) and pitchRate < 0 then
+		pitchRate = 0
+	elseif pitch >= math.rad(flight.MaxPitch) and pitchRate > 0 then
+		pitchRate = 0
 	end
+
+	-- Roll is always 0: with pitch clamped inside +-90 this is singularity-free.
+	orientation = CFrame.fromEulerAnglesYXZ(pitch, yaw, 0)
 end
 
-function FlightController:_integrateSpeed(dt: number)
+function FlightController:_integrateThrust(dt: number)
 	local flight = Config.Flight
 
 	local boosting = UserInputService:IsKeyDown(flight.BoostKey)
@@ -242,19 +277,37 @@ function FlightController:_integrateSpeed(dt: number)
 
 	if throttle > 0 then
 		local accel = flight.ThrottleAccel * (boosting and flight.BoostAccelMultiplier or 1)
-		speed += accel * dt
+		forwardSpeed += accel * dt
 	elseif throttle < 0 then
-		speed -= flight.ThrottleDecel * dt
+		forwardSpeed -= flight.ThrottleDecel * dt
 	end
 
 	if braking then
-		speed -= flight.BrakeDecel * dt
+		forwardSpeed -= flight.BrakeDecel * dt
 	end
 
 	-- Passive drag, proportional to speed.
-	speed -= speed * flight.Drag * dt
+	forwardSpeed -= forwardSpeed * flight.Drag * dt
+	forwardSpeed = math.clamp(forwardSpeed, flight.MinSpeed, maxSpeed)
 
-	speed = math.clamp(speed, flight.MinSpeed, maxSpeed)
+	-- Q climbs, E descends. Independent of throttle so you can hover-climb.
+	hoverSpeed = approachThrust(
+		hoverSpeed,
+		axis(flight.HoverDownKey, flight.HoverUpKey),
+		flight.HoverSpeed,
+		flight.HoverAccel,
+		flight.HoverDecel,
+		dt
+	)
+
+	strafeSpeed = approachThrust(
+		strafeSpeed,
+		axis(flight.StrafeLeftKey, flight.StrafeRightKey),
+		flight.StrafeSpeed,
+		flight.StrafeAccel,
+		flight.StrafeDecel,
+		dt
+	)
 end
 
 function FlightController:_update(dt: number)
@@ -266,16 +319,21 @@ function FlightController:_update(dt: number)
 		return
 	end
 
-	self:_readSteering(dt)
-	self:_integrateOrientation(dt)
-	self:_integrateSpeed(dt)
+	self:_steer(dt)
+	self:_integrateThrust(dt)
 
 	-- Mouse stays locked to screen centre while flying. Re-asserted every frame:
 	-- the PlayerModule resets MouseBehavior on respawn and on input-mode changes.
 	UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
 
+	-- Hover thrust is world-vertical, not craft-relative: pitching the nose up
+	-- must not turn "climb" into "climb and drift backwards".
+	velocity = orientation.LookVector * forwardSpeed
+		+ orientation.RightVector * strafeSpeed
+		+ Vector3.yAxis * hoverSpeed
+
 	if linearVelocity then
-		linearVelocity.VectorVelocity = orientation.LookVector * speed
+		linearVelocity.VectorVelocity = velocity
 	end
 	if alignOrientation then
 		alignOrientation.CFrame = orientation
@@ -295,7 +353,13 @@ function FlightController:GetOrientation(): CFrame
 end
 
 function FlightController:GetSpeed(): number
-	return speed
+	return forwardSpeed
+end
+
+-- Full world velocity including strafe and hover. Impact detection casts along
+-- THIS, not LookVector: strafing or climbing into a wall must still carve.
+function FlightController:GetVelocity(): Vector3
+	return velocity
 end
 
 function FlightController:GetRoot(): BasePart?
@@ -308,7 +372,13 @@ end
 	applies its own impact cost; the server only owns the destruction.
 ]]
 function FlightController:ApplySpeedLoss(amount: number)
-	speed = math.max(Config.Flight.MinSpeed, speed - amount)
+	local flight = Config.Flight
+	forwardSpeed = math.max(flight.MinSpeed, forwardSpeed - amount)
+
+	-- Lateral/vertical thrust bleeds too, or a sideways crash costs nothing.
+	local scale = math.max(0, 1 - amount / math.max(flight.MaxSpeed, 1))
+	strafeSpeed *= scale
+	hoverSpeed *= scale
 end
 
 --------------------------------------------------------------------------------

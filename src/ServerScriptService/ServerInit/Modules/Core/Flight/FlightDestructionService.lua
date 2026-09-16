@@ -65,7 +65,12 @@ function FlightDestructionService:_onRequestCarve(
 		return
 	end
 
-	speed = math.clamp(speed, destruction.MinCarveSpeed, Config.Flight.BoostMaxSpeed)
+	-- The client reports TRAVEL speed, which can exceed forward top speed because
+	-- strafe and hover thrust add on top of it. Ceiling is the sum, so a legitimate
+	-- diagonal boost is not silently penalised while a fabricated number still is.
+	local flight = Config.Flight
+	local maxTravelSpeed = flight.BoostMaxSpeed + flight.StrafeSpeed + flight.HoverSpeed
+	speed = math.clamp(speed, destruction.MinCarveSpeed, maxTravelSpeed)
 
 	-- The client's requested radius is honoured only up to the clamp, and never
 	-- beyond what its claimed speed justifies.

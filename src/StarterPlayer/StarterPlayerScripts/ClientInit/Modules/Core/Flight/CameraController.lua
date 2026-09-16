@@ -2,18 +2,15 @@
 --[[
 	CameraController  (client)
 
-	Chase camera for 6DOF flight. Structure ported from the snowboard project's
-	CameraController: Scriptable + LockCenter re-asserted every frame,
-	exp-eased chase distance, raycast pull-in, every constant in config.
+	Chase camera for clamped-pitch hover flight. Structure ported from the
+	snowboard project's CameraController: Scriptable + LockCenter re-asserted
+	every frame, exp-eased chase distance, raycast pull-in, every constant in
+	config.
 
-	What CHANGED for omnidirectional flight: the snowboard camera built its CFrame
-	from fromEulerAnglesYXZ(pitch, yaw, 0) against an implicit world-up. That
-	flips and degenerates the moment you fly vertically or inverted. Here the
-	camera is derived from the craft's own orientation CFrame, with the roll
-	component blended by Config.Camera.RollFollow:
-
-		1 = cockpit-true (horizon rolls with you — honest, more disorienting)
-		0 = world-up stabilized (horizon stays level — readable, lies about roll)
+	The camera simply follows the craft's orientation (yaw + clamped pitch, zero
+	roll), smoothed so it lags the nose slightly. No roll blending and no
+	near-vertical special case are needed: pitch can never reach +-90, so the
+	world-up reference never degenerates.
 
 	Mouse input belongs to FlightController (it steers the craft). This module
 	only reads state.
@@ -45,37 +42,6 @@ local function ease(response: number, dt: number): number
 	return 1 - math.exp(-response * dt)
 end
 
---[[
-	Blend the craft's roll out of its orientation.
-
-	weight = 1 -> craft rotation untouched.
-	weight < 1 -> rebuild the rotation from the craft's LookVector with an up
-	vector slerped between the craft's own up and world up. Falls back to the
-	craft's up when looking straight up/down, where world up gives no usable
-	right vector.
-]]
-local function applyRollFollow(rotation: CFrame, weight: number): CFrame
-	if weight >= 0.999 then
-		return rotation
-	end
-
-	local look = rotation.LookVector
-	local craftUp = rotation.UpVector
-
-	-- Degenerate when flying near-vertically: world up is parallel to look.
-	local worldUp = Vector3.yAxis
-	if math.abs(look:Dot(worldUp)) > 0.985 then
-		return rotation
-	end
-
-	local blendedUp = craftUp:Lerp(worldUp, 1 - weight)
-	if blendedUp.Magnitude < 1e-3 then
-		return rotation
-	end
-
-	return CFrame.lookAt(Vector3.zero, look, blendedUp.Unit).Rotation
-end
-
 function CameraController:_update(dt: number)
 	local camera = workspace.CurrentCamera
 	if not camera then
@@ -105,8 +71,8 @@ function CameraController:_update(dt: number)
 	camera.CameraType = Enum.CameraType.Scriptable
 	UserInputService.MouseIconEnabled = false
 
-	local craftRotation = Flight:GetOrientation()
-	local targetRotation = applyRollFollow(craftRotation, cam.RollFollow)
+	-- Craft rotation has zero roll and clamped pitch, so it is used directly.
+	local targetRotation = Flight:GetOrientation()
 
 	if not initialized then
 		initialized = true

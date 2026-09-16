@@ -3,8 +3,8 @@
 | Phase | State |
 |---|---|
 | 0 Repo + ported Core/voxel infrastructure | **done** |
-| 1 `FlightConfig`, `Net`, `FlightController` (6DOF) | **done** |
-| 2 `CameraController` (center-lock, roll-follow, speed FOV) | **done** |
+| 1 `FlightConfig`, `Net`, `FlightController` (clamped-pitch hover flight) | **done** |
+| 2 `CameraController` (center-lock, chase, speed FOV) | **done** |
 | 3 `FlightDestructionController` (client spherecast) + `FlightDestructionService` (server validate + carve) | **done** |
 | 4 Impact feel (shake, crash/tumble, SFX) | not started |
 | 5 Debug/tuning UI | not started |
@@ -13,10 +13,19 @@ Decisions locked (2026-09-16): pure character movement (no craft model); client-
 spherecast detection → `Net.RequestCarve` → server carve; destructible geometry =
 descendants of `workspace.Map`; client-authoritative movement.
 
+**Flight model revised: omnidirectional 6DOF dropped.** Yaw is free, pitch is hard
+clamped to `MinPitch`/`MaxPitch` (default ±55°), roll axis removed entirely. Vertical
+movement is `Q`/`E` hover thrust in world space; `A`/`D` are lateral strafe.
+
+Consequence: **the gimbal-lock problem no longer exists.** It only appears when pitch
+can reach ±90°. With pitch clamped and roll pinned to 0, orientation is two scalars fed
+to `CFrame.fromEulerAnglesYXZ(pitch, yaw, 0)`. The CFrame-delta integration and the
+vendored `Utils/Quaternion.luau` were both deleted — dead weight, not insurance.
+
 All modules syntax-checked with `luau-compile` 0.738. Not playtested — that's yours.
 
-Controls: `F` toggle flight, mouse steers, `A`/`D` roll, `W`/`S` throttle,
-`Shift` boost, `Ctrl` air-brake, `Space` auto-level.
+Controls: `F` toggle flight, mouse yaw/pitch, `W`/`S` throttle, `Q`/`E` hover up/down,
+`A`/`D` strafe, `Shift` boost, `Ctrl` air-brake.
 
 ---
 
@@ -57,63 +66,71 @@ Port change already applied to `VoxelDestructionService`: `DESTRUCTIBLE_CONTAINE
 
 ---
 
-## 1. Gimbal lock — the actual answer
+## 1. Gimbal lock — resolved by constraining the model, not by a library
 
-Gimbal lock is a property of **Euler-angle state**, not of 3D rotation. It appears when orientation is *stored* as `(pitch, yaw, roll)` and rebuilt with `CFrame.Angles`/`fromOrientation` each frame.
+Gimbal lock is a property of **Euler-angle state whose pitch can reach ±90°**, not of 3D
+rotation in general. At ±90° pitch, yaw and roll become the same axis and one degree of
+freedom is lost.
 
-Fix without any library: store orientation as a **CFrame rotation** and integrate body-relative deltas.
+The flight model clamps pitch to ±55° and has no roll axis at all. Inside that band the
+Euler representation is well-conditioned and unambiguous, so orientation is simply:
 
 ```lua
--- _orientation: CFrame (rotation only)
-local delta = CFrame.fromAxisAngle(Vector3.xAxis, pitchRate * dt)
-	* CFrame.fromAxisAngle(Vector3.yAxis, yawRate * dt)
-	* CFrame.fromAxisAngle(Vector3.zAxis, rollRate * dt)
-_orientation = (_orientation * delta):Orthonormalize()
+yaw += yawRate * dt
+pitch = math.clamp(pitch + pitchRate * dt, math.rad(MinPitch), math.rad(MaxPitch))
+orientation = CFrame.fromEulerAnglesYXZ(pitch, yaw, 0)
 ```
 
-Full 6DOF, no singularity, no library. `:Orthonormalize()` each frame kills float drift.
+No quaternions, no CFrame-delta accumulation, no `:Orthonormalize()` drift maintenance.
+The vendored `Utils/Quaternion.luau` (Sleitnick's `RbxUtil` module — the library you were
+thinking of) was **deleted**: keeping an unused rotation library "in case" is how a repo
+grows weight. Re-vendor it only if a genuine slerp/blend requirement appears.
 
-Quaternions earn their place only for:
-- **slerp** — smoothing craft orientation toward a target (aim assist, auto-level, camera follow);
-- **compact replication** — 4 × i16 quantized quat < a full CFrame;
-- **averaging / blending** rotations.
-
-Vendored at `src/ReplicatedStorage/Modules/Utils/Quaternion.luau` — Sleitnick's `RbxUtil` Quaternion (this is the library you were thinking of; EgoMoose wrote the canonical article, Sleitnick shipped the module). Use it where slerp is wanted, not as a default.
+One non-obvious detail that matters for feel: when pitch hits the clamp, the smoothed
+`pitchRate` is zeroed. Otherwise the rate keeps "charging" against the limit while you
+hold the mouse up, and the nose snaps the instant you pull back down.
 
 ---
 
 ## 2. Phase 1 — flight core (client)
 
-`ClientInit/Modules/Core/Flight/FlightController.lua` — Priority 60.
+`ClientInit/Modules/Core/Flight/FlightController.lua`.
 
-**Rig:** character `HumanoidRootPart`, Humanoid `PlatformStand = true` while flying. Movement via constraints on the HRP so the physics engine (and network ownership) stays intact:
+**Rig:** character `HumanoidRootPart`, Humanoid `PlatformStand = true` while flying.
+Movement via constraints on the HRP so the physics engine (and network ownership) stays intact:
 
 | Constraint | Role |
 |---|---|
 | `LinearVelocity` (`RelativeTo = World`, `VectorVelocity`) | thrust — velocity set directly, no force integration, matches snowboard `MoveMotor` pattern |
-| `AlignOrientation` (`Mode = OneAttachment`, `RigidityEnabled = false`, high `Responsiveness`) | steers the body toward `_orientation` |
+| `AlignOrientation` (`Mode = OneAttachment`, `RigidityEnabled = false`, high `Responsiveness`) | steers the body toward `orientation` |
 
-**State:** `_orientation: CFrame`, `_speed: number`, `_throttle`, `_boost`.
+**State:** `yaw`, `pitch` (clamped), `forwardSpeed`, `strafeSpeed`, `hoverSpeed`, `velocity`.
 
 **Input map (keyboard/mouse first, gamepad later):**
 
 | Input | Effect |
 |---|---|
-| Mouse X/Y delta | yaw / pitch rate (relative, not absolute — feeds `pitchRate`/`yawRate`) |
-| `A` / `D` | roll |
-| `W` / `S` | throttle up / down |
-| `Shift` | boost (speed multiplier + FOV punch + camera pull-back) |
+| Mouse X | yaw rate (free, wraps) |
+| Mouse Y | pitch rate, clamped to `MinPitch`/`MaxPitch` |
+| `W` / `S` | forward throttle up / down |
+| `Q` / `E` | hover thrust up / down — **world-vertical**, so pitching the nose up does not turn "climb" into "climb and drift backwards" |
+| `A` / `D` | lateral strafe, no rotation |
+| `Shift` | boost (higher top speed + accel, FOV punch, camera pull-back) |
 | `Ctrl` | air-brake |
-| `Space` | (reserved) auto-level: slerp `_orientation` toward level heading |
 
-**Per-frame loop (`RenderStepped`):**
-1. read input → target angular rates, apply **rate smoothing** (exponential lerp, `1 - exp(-k*dt)` — same easing form as snowboard camera) so turns have inertia;
-2. integrate `_orientation` (section 1);
-3. integrate speed: `throttle` accel, quadratic drag, boost multiplier, clamp to `MaxSpeed`;
-4. write `LinearVelocity.VectorVelocity = _orientation.LookVector * _speed`;
-5. write `AlignOrientation.CFrame = _orientation`.
+Hover and strafe ramp through `approachThrust` (accel while held, decay when released)
+so they don't snap on and off.
 
-**Tunables** live in `ReplicatedStorage/Modules/Core/SharedModules/FlightConfig.lua` (Priority 100) — mirrors the snowboard repo's `SnowboardConfig.Camera` pattern. Nothing tunable hardcoded in the controller.
+**Per-frame loop (`BindToRenderStep`, just before camera priority):**
+1. read mouse → target angular rates, smoothed with `1 - exp(-k*dt)` so turns have inertia;
+2. integrate `yaw`, clamp `pitch`, zero the rate at the clamp, rebuild `orientation`;
+3. integrate `forwardSpeed` (throttle accel, linear drag, boost/brake, clamp) and ramp `strafeSpeed`/`hoverSpeed`;
+4. `velocity = look * forward + right * strafe + Vector3.yAxis * hover`;
+5. write `LinearVelocity.VectorVelocity = velocity`, `AlignOrientation.CFrame = orientation`.
+
+**Tunables** live in `ReplicatedStorage/Modules/Core/SharedModules/FlightConfig.lua` —
+mirrors the snowboard repo's `SnowboardConfig.Camera` pattern. Nothing tunable hardcoded
+in the controller.
 
 ---
 
@@ -128,26 +145,41 @@ Keep from snowboard:
 - raycast pull-in with `CollisionPadding`;
 - all constants in a `Config.Camera` table.
 
-Change for 6DOF — this is where a snowboard camera breaks:
-- the snowboard camera builds its CFrame from `fromEulerAnglesYXZ(pitch, yaw, 0)` with an implicit world-up. Inverted or vertical flight makes that flip/lock. Instead **derive the camera from the craft orientation**: `camCF = craftOrientation * offsetCF`, then blend the roll component by `RollFollow ∈ [0,1]` (1 = cockpit-true, 0 = world-up-stabilized). Expose `RollFollow` as a tunable; it's a feel decision.
-- mouse delta steers the **craft**, not the camera. Camera gets a small free-look decoupling (lag/lead) only.
-- FOV as a speed function (`BaseFov → MaxFov`), eased; boost adds a punch.
+Changed from the snowboard version:
+- the craft's rotation is used **directly** (`camCF = CFrame.new(focus + offset) * smoothedRotation`), exp-smoothed so the camera lags the nose. No roll blending and no near-vertical guard: pitch is clamped to ±55°, so the world-up reference never degenerates and there is no inverted-flight case to handle;
+- mouse delta steers the **craft**, not the camera;
+- FOV as a speed function (`BaseFov → MaxFov`), eased;
+- camera is handed back to `CameraType.Custom` when flight is toggled off.
 
 ---
 
-## 4. Phase 3 — flight → destruction bridge (server)
+## 4. Phase 3 — flight → destruction bridge
 
-`ServerInit/Modules/Core/Flight/FlightImpactService.lua` — Priority 60. Copy the *approach* of `RagdollDestructionService` (bachi): server-authoritative destruction cannot be instant, so it must **lead** the body.
+Detection is **client-side** (`ClientInit/.../Flight/FlightDestructionController.lua`);
+carving is **server-side** (`ServerInit/.../Flight/FlightDestructionService.lua`).
 
-Per `Heartbeat`, for each flying player:
-1. `v = hrp.AssemblyLinearVelocity`; skip if `v.Magnitude < MinCarveSpeed`;
-2. shapecast/raycast from `hrp.Position` along `v.Unit`, length `= v.Magnitude * dt * LeadFactor + Radius`, filtered to the destructible containers;
-3. on hit → `VoxelDestructionService:DestroyArea(hitPos, radius, v.Unit, force, { MinVoxelSize = …, ResetTime = … })`;
-4. apply **impact cost**: subtract speed proportional to carved volume — `speedLoss = k * radius^3 / mass`; replicate the new speed back to the owning client (Packet) so the client-side `_speed` stays authoritative-consistent.
+Client owns detection because it owns movement: a server-side cast at 400+ studs/s is a
+frame or two stale, which is 10+ studs of error.
 
-Tuning table `SharedModules/DestructionConfig.lua`: carve radius / min-voxel-size / debris force / reset time **as functions of impact speed** (fast = bigger hole, coarser voxels, more force). Mirrors bachi's `CombatData` per-move constants.
+Client, each `PostSimulation`:
+1. `travel = FlightController:GetVelocity()` — full velocity, so strafing or hover-climbing into a wall carves too; skip if `travel.Magnitude < MinCarveSpeed`;
+2. `workspace:Spherecast(root.Position, ProbeRadius, travel.Unit * lead, params)` with `lead = max(speed * dt * LeadFactor, MinLeadDistance)`, Include-filtered to the destructible containers (rebuilt on `workspace.ChildAdded/Removed`);
+3. on hit → `Net.RequestCarve:Fire(position, radius, direction, speed)`, rate-limited by `MinCarveInterval` and deduped against the previous carve position within `radius * 0.5`;
+4. apply its own speed loss immediately (client owns movement, server owns destruction).
 
-Setup needed in Studio (MCP, on request): a `workspace.Map` folder holding destructible geometry, or rename `DESTRUCTIBLE_CONTAINER_NAMES`.
+Server, on `Net.RequestCarve.OnServerEvent`:
+1. rate limit per player (`ServerMinCarveInterval`);
+2. reject if the point is farther than `MaxCarveDistanceFromPlayer` from that player's own root;
+3. clamp reported speed to `BoostMaxSpeed + StrafeSpeed + HoverSpeed` (travel speed legitimately exceeds forward top speed when thrusters stack);
+4. clamp radius to `min(GetCarveRadius(speed), MaxRequestRadius)`;
+5. **derive** force and `MinVoxelSize` from the clamped speed instead of trusting client-sent values — otherwise a client asks for 0.1-stud voxels and detonates the subdivision budget;
+6. `VoxelDestructionService:DestroyArea(position, radius, direction.Unit, force, { MinVoxelSize, ResetTime })`.
+
+Tuning lives in `FlightConfig.Destruction` (one shared table, read by both sides) with
+`GetCarveRadius` / `GetMinVoxelSize` / `GetDebrisForce` **as functions of impact speed**
+(fast = bigger hole, coarser voxels, more force). Mirrors bachi's `CombatData` per-move
+constants. `workspace.Map` already exists in the place; `FlightConfig.DestructibleContainers`
+and `DESTRUCTIBLE_CONTAINER_NAMES` in `VoxelDestructionService` must stay in sync.
 
 Key inherited limits to respect while tuning: `MAX_SUBDIVISIONS = 2000` per call, `SIM_PART_CAPACITY = 4000`, `MAX_VOXEL_ID = 65535`, 20 Hz physics snapshots. High-speed flight will hit these far harder than melee combat did — expect to raise `MinVoxelSize` (coarser voxels) rather than the caps.
 
@@ -171,12 +203,13 @@ Cheap, high-payoff, after 1–3 work:
 
 ---
 
-## 7. Open decisions (need your call)
+## 7. Decisions — resolved
 
-1. **Player body** — R6/R15 character flying directly, or an invisible craft model the character is welded into? Affects mass, collision shape, and how much the voxel carve radius must cover.
-2. **Authority** — client-authoritative movement (network ownership of HRP, server just validates speed/position sanity) is the only thing that feels good at these speeds. Server-authoritative flight will feel awful. Confirm we accept exploit surface for now.
-3. **Destruction trigger** — server-led shapecast (section 4) vs. client reports its own impact and server verifies. Server-led is safer and simpler; it lags a frame or two at 300+ studs/s.
-4. **Map source** — hand-built destructible blocks, or generated city blocks? Voxel budget tuning depends on it.
+1. **Player body** — plain character, no craft model.
+2. **Authority** — client-authoritative movement; server validates carve requests only. Exploit surface accepted for now.
+3. **Destruction trigger** — client spherecast → `Net.RequestCarve` → server carves and re-validates.
+4. **Flight model** — clamped pitch (±55°), no roll, `Q`/`E` world-vertical hover, `A`/`D` strafe.
+5. **Map source** — `workspace.Map` folder, all descendants destructible (hand-built for now).
 
 ---
 

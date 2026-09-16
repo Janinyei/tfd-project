@@ -13,9 +13,9 @@
 local FlightConfig = {}
 
 FlightConfig.Flight = {
-	-- Speed (studs/s)
+	-- Forward speed (studs/s)
 	BaseSpeed = 60, -- speed the moment you enter flight
-	MinSpeed = 0, -- full stop allowed (hover)
+	MinSpeed = 0, -- full stop allowed (hover in place)
 	MaxSpeed = 400,
 	BoostMaxSpeed = 700,
 
@@ -26,10 +26,27 @@ FlightConfig.Flight = {
 
 	BoostAccelMultiplier = 2.2,
 
-	-- Angular rates (radians/s) at full input
-	PitchRate = 2.6,
+	-- Vertical hover thrust (Q up / E down). Independent of forward throttle, so
+	-- you can climb while stationary.
+	HoverSpeed = 90, -- studs/s at full hold
+	HoverAccel = 320, -- studs/s^2 ramp toward HoverSpeed
+	HoverDecel = 260, -- studs/s^2 decay back to 0 when released
+
+	-- Lateral strafe thrust (A / D). Does not rotate the craft.
+	StrafeSpeed = 70,
+	StrafeAccel = 300,
+	StrafeDecel = 260,
+
+	-- Angular rates (radians/s) at full mouse deflection. No roll axis: the craft
+	-- stays level on Z, which is what makes the clamped-pitch model readable.
+	PitchRate = 1.9,
 	YawRate = 2.2,
-	RollRate = 3.4,
+
+	-- Pitch is HARD CLAMPED, in degrees. Staying well clear of +-90 is what
+	-- removes the gimbal/singularity problem entirely: yaw and pitch can be
+	-- plain scalars, no quaternions or CFrame-delta integration needed.
+	MinPitch = -55, -- nose down
+	MaxPitch = 55, -- nose up
 
 	-- Mouse steering. Pixel delta is divided by MouseFullDeflection to get a
 	-- [-1, 1] stick value, then scaled by MouseGain and the user's
@@ -42,9 +59,6 @@ FlightConfig.Flight = {
 	-- Low = heavy craft with rotational inertia, high = instant snap.
 	RateResponse = 9,
 
-	-- Auto-level (hold key): slerp orientation toward level heading.
-	AutoLevelRate = 4,
-
 	-- Constraint strengths
 	AlignResponsiveness = 60,
 	AlignMaxTorque = 1e6,
@@ -52,11 +66,12 @@ FlightConfig.Flight = {
 	ToggleKey = Enum.KeyCode.F,
 	BoostKey = Enum.KeyCode.LeftShift,
 	BrakeKey = Enum.KeyCode.LeftControl,
-	AutoLevelKey = Enum.KeyCode.Space,
 	ThrottleUpKey = Enum.KeyCode.W,
 	ThrottleDownKey = Enum.KeyCode.S,
-	RollLeftKey = Enum.KeyCode.A,
-	RollRightKey = Enum.KeyCode.D,
+	StrafeLeftKey = Enum.KeyCode.A,
+	StrafeRightKey = Enum.KeyCode.D,
+	HoverUpKey = Enum.KeyCode.Q,
+	HoverDownKey = Enum.KeyCode.E,
 }
 
 FlightConfig.Camera = {
@@ -69,10 +84,8 @@ FlightConfig.Camera = {
 
 	FocusForward = 2, -- look-ahead offset applied to the focus point
 
-	-- 1 = camera rolls with the craft (cockpit-true, readable when inverted).
-	-- 0 = camera stays world-up-stabilized (readable, but lies about orientation).
-	RollFollow = 0.75,
-	-- Exponential smoothing of the camera's orientation toward the craft's.
+	-- Exponential smoothing of the camera's orientation toward the craft's, so the
+	-- camera lags slightly instead of being welded to the nose.
 	OrientationResponse = 12,
 
 	BaseFov = 70,
