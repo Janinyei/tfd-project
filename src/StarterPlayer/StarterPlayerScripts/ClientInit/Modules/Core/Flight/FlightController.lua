@@ -2,28 +2,39 @@
 --[[
 	FlightController  (client)
 
-	Classic hover-flight, NOT omnidirectional:
-	  * mouse yaws freely and pitches within a hard clamp (MinPitch/MaxPitch);
-	  * no roll axis — the craft stays level on Z;
-	  * Q / E apply vertical hover thrust, independent of forward throttle;
-	  * A / D strafe laterally without rotating;
-	  * W / S throttle forward speed, Shift boosts, Ctrl air-brakes.
+	Camera-relative arcade flight, two modes:
 
-	NO GIMBAL LOCK BY CONSTRUCTION: pitch is clamped well clear of +-90 and roll
-	is always zero, so orientation is just two scalars fed to
-	CFrame.fromEulerAnglesYXZ. The singularity that motivates quaternions only
-	exists when pitch can reach straight up/down; clamping removes it rather than
-	papering over it.
+	CRUISE (no Shift)
+		WASD moves along the camera's heading projected onto the horizontal plane,
+		Q/E moves world-vertical. Velocity is SET at full CruiseSpeed on the first
+		frame and set to EXACTLY ZERO the frame all keys are released. No
+		acceleration, no inertia, no coasting — press to go, release to stop dead.
+
+	BOOST (hold Shift)
+		Direction comes from where the camera is LOOKING, pitch included, so you
+		fly into the screen. Speed accelerates from CruiseSpeed toward
+		BoostMaxSpeed while held. Releasing Shift returns to cruise immediately.
+
+	AIM vs BODY: the mouse aims the CAMERA (yaw + clamped pitch). The craft body
+	does not steer — it turns to face whatever direction it is travelling, purely
+	cosmetically. This is the inverse of a plane: movement follows the camera
+	rather than the camera following the nose.
+
+	NO GIMBAL LOCK: pitch is clamped well clear of +-90 and roll is always zero,
+	so aim is two scalars fed to CFrame.fromEulerAnglesYXZ.
 
 	Movement is client-authoritative (network ownership of the HumanoidRootPart).
-	Anything else feels unusable at 400+ studs/s.
+	Anything else feels unusable at 700 studs/s.
 
-	Public API (read by CameraController and FlightDestructionController):
-		:IsFlying()       -> boolean
-		:GetOrientation() -> CFrame  (rotation only, no roll)
-		:GetSpeed()       -> number  (forward speed only)
-		:GetVelocity()    -> Vector3 (forward + strafe + hover, world space)
-		:GetRoot()        -> BasePart?
+	Public API:
+		:IsFlying()          -> boolean
+		:GetAimOrientation() -> CFrame   (camera aim; what CameraController uses)
+		:GetOrientation()    -> CFrame   (body facing; cosmetic)
+		:GetVelocity()       -> Vector3  (world velocity actually applied)
+		:GetSpeed()          -> number   (travel speed)
+		:IsBoosting()        -> boolean
+		:GetRoot()           -> BasePart?
+		:IsMouseLocked()     -> boolean
 		:ApplySpeedLoss(amount)
 ]]
 
@@ -44,26 +55,30 @@ local Camera
 
 -- Live state
 local flying = false
-local yaw = 0 -- radians, unbounded (wraps naturally)
-local pitch = 0 -- radians, clamped to [MinPitch, MaxPitch]
-local orientation = CFrame.identity -- rebuilt from yaw/pitch each frame
 
-local forwardSpeed = 0
-local strafeSpeed = 0 -- signed, +right
-local hoverSpeed = 0 -- signed, +up
-local velocity = Vector3.zero -- last applied world velocity
+-- Aim (camera). Yaw is unbounded, pitch clamped.
+local yaw = 0
+local pitch = 0
+local aimOrientation = CFrame.identity
+
+-- Body facing. Eased toward travel direction; cosmetic only.
+local bodyOrientation = CFrame.identity
+
+local velocity = Vector3.zero
+local boostSpeed = 0
+local boosting = false
 
 -- Mouse delta accumulated since last frame
 local mouseDeltaX, mouseDeltaY = 0, 0
 
 -- Mouse capture. Unlocking frees the cursor for the debug panel; while unlocked
 -- the craft ignores mouse motion entirely, otherwise reaching for a slider
--- would spin the nose.
+-- would swing the camera.
 local mouseLocked = true
 
--- Impact detection: measured speed last frame, and the loss that tripped the
--- most recent hard impact (for the debug panel).
-local lastMeasuredSpeed = 0
+-- Impact detection: the velocity we commanded last frame, and the shortfall that
+-- tripped the most recent hard impact (for the debug panel).
+local lastCommandedSpeed = 0
 local lastImpactLoss = 0
 
 -- Rig
@@ -94,30 +109,6 @@ local function axis(negative: Enum.KeyCode, positive: Enum.KeyCode): number
 	return value
 end
 
---[[
-	Drive a thrust axis toward `input * maxSpeed`: accelerate while held, decay
-	toward zero when released. Keeps hover/strafe from snapping on and off.
-]]
-local function approachThrust(
-	current: number,
-	input: number,
-	maxSpeed: number,
-	accel: number,
-	decel: number,
-	dt: number
-): number
-	local target = input * maxSpeed
-	local rate = (input == 0) and decel or accel
-	local step = rate * dt
-
-	if current < target then
-		return math.min(current + step, target)
-	elseif current > target then
-		return math.max(current - step, target)
-	end
-	return current
-end
-
 --------------------------------------------------------------------------------
 -- RIG
 --------------------------------------------------------------------------------
@@ -134,18 +125,15 @@ function FlightController:_buildRig(): boolean
 	attachment.Parent = root
 	rigTrove:Add(attachment)
 
-	-- Velocity is SET, not integrated from forces: no fighting gravity, no
-	-- accumulated error, and the physics engine still owns collisions.
-	--
-	-- Force IS limited, so slamming indestructible geometry is a fight the
-	-- collision wins instead of the constraint — unlimited force reads as the
-	-- body convulsing against the surface.
-	--
-	-- The limit MUST be the scalar MaxForce with ForceLimitMode.Magnitude.
-	-- MaxAxesForce is ignored unless ForceLimitMode is PerAxis, so setting only
-	-- MaxAxesForce leaves the effective cap at MaxForce's default and the
-	-- constraint cannot even hold altitude against gravity. Magnitude is also
-	-- the right model here: thrust should cap isotropically, not per world axis.
+	--[[
+		Velocity is SET, not integrated from forces: no fighting gravity and no
+		accumulated error, while the physics engine still owns collisions.
+
+		The force limit MUST be the scalar MaxForce with ForceLimitMode.Magnitude.
+		MaxAxesForce is ignored unless ForceLimitMode is PerAxis, so setting only
+		MaxAxesForce leaves the effective cap at MaxForce's default and the
+		constraint cannot even hold altitude against gravity.
+	]]
 	local lv = Instance.new("LinearVelocity")
 	lv.Name = "FlightVelocity"
 	lv.Attachment0 = attachment
@@ -158,17 +146,15 @@ function FlightController:_buildRig(): boolean
 	lv.Parent = root
 	rigTrove:Add(lv)
 
+	-- Rigid: the body matches the commanded facing the same frame. Body facing is
+	-- cosmetic here, so there is nothing to gain from letting it lag.
 	local ao = Instance.new("AlignOrientation")
 	ao.Name = "FlightOrientation"
 	ao.Attachment0 = attachment
 	ao.Mode = Enum.OrientationAlignmentMode.OneAttachment
-	-- Rigid: the body matches the commanded orientation the same frame, so the
-	-- craft always points exactly where you are aiming. With a torque-limited
-	-- align, catching up took longer than the turn itself at high speed, which
-	-- is what read as "turning gets harder the faster you go".
 	ao.RigidityEnabled = true
 	ao.ReactionTorqueEnabled = false
-	ao.CFrame = orientation
+	ao.CFrame = bodyOrientation
 	ao.Parent = root
 	rigTrove:Add(ao)
 
@@ -197,24 +183,20 @@ function FlightController:StartFlight()
 
 	local flight = Config.Flight
 
-	-- Inherit heading, drop any roll, clamp inherited pitch into the legal band.
+	-- Inherit heading, drop roll, clamp inherited pitch into the legal band.
 	local rx, ry = root.CFrame:ToEulerAnglesYXZ()
 	yaw = ry
 	pitch = math.clamp(rx, math.rad(flight.MinPitch), math.rad(flight.MaxPitch))
-	orientation = CFrame.fromEulerAnglesYXZ(pitch, yaw, 0)
+	aimOrientation = CFrame.fromEulerAnglesYXZ(pitch, yaw, 0)
+	bodyOrientation = CFrame.fromEulerAnglesYXZ(0, yaw, 0)
 
-	forwardSpeed = math.max(flight.BaseSpeed, root.AssemblyLinearVelocity.Magnitude)
-	strafeSpeed, hoverSpeed = 0, 0
-	-- Seeded from real motion, not zero: with inertia smoothing, starting at zero
-	-- would make entering flight ramp up from a standstill and eat any speed you
-	-- already had.
-	velocity = root.AssemblyLinearVelocity
+	velocity = Vector3.zero
+	boostSpeed = 0
+	boosting = false
 	mouseDeltaX, mouseDeltaY = 0, 0
 	mouseLocked = true
 
-	-- Seeded from the real assembly, or a stale value from a previous flight
-	-- would register as a huge impact on the first frame.
-	lastMeasuredSpeed = root.AssemblyLinearVelocity.Magnitude
+	lastCommandedSpeed = 0
 	lastImpactLoss = 0
 
 	if not self:_buildRig() then
@@ -266,21 +248,10 @@ end
 -- PER-FRAME
 --------------------------------------------------------------------------------
 
---[[
-	Aim-style steering: mouse delta maps DIRECTLY to a yaw/pitch delta, with no
-	rate smoothing and no speed term anywhere. Turn rate is therefore identical
-	at 60 and at 700 studs/s, and the nose stops the instant the mouse stops.
-
-	Deliberately not rate-smoothed: exponential smoothing added lag that felt
-	like "turning gets heavier with speed" even though the rate was constant,
-	because the lag stayed fixed while the distance covered during it grew.
-]]
-function FlightController:_steer(_dt: number)
+-- Mouse aims the camera. Pixel delta maps directly to a yaw/pitch delta in
+-- radians: no smoothing, no speed term.
+function FlightController:_aim()
 	local flight = Config.Flight
-
-	-- Mouse right (+X) yaws right, which is NEGATIVE rotation about +Y.
-	-- Mouse up (-Y) pitches up, which is POSITIVE rotation about +X.
-	-- Scaled in radians per pixel, so this is aim, not a joystick deflection.
 	local gain = flight.MouseSensitivity * UserInputService.MouseDeltaSensitivity
 
 	yaw -= mouseDeltaX * gain
@@ -291,110 +262,90 @@ function FlightController:_steer(_dt: number)
 	)
 	mouseDeltaX, mouseDeltaY = 0, 0
 
-	-- Roll is always 0: with pitch clamped inside +-90 this is singularity-free.
-	orientation = CFrame.fromEulerAnglesYXZ(pitch, yaw, 0)
+	aimOrientation = CFrame.fromEulerAnglesYXZ(pitch, yaw, 0)
 end
 
-function FlightController:_integrateThrust(dt: number)
+--[[
+	Build this frame's velocity outright. Nothing is integrated except boost
+	speed, so there is no state to unwind when input stops.
+]]
+function FlightController:_move(dt: number): Vector3
 	local flight = Config.Flight
 
-	local boosting = UserInputService:IsKeyDown(flight.BoostKey)
-	local braking = UserInputService:IsKeyDown(flight.BrakeKey)
-	local throttle = axis(flight.ThrottleDownKey, flight.ThrottleUpKey)
+	boosting = UserInputService:IsKeyDown(flight.BoostKey)
 
-	local maxSpeed = boosting and flight.BoostMaxSpeed or flight.MaxSpeed
-
-	if throttle > 0 then
-		local accel = flight.ThrottleAccel * (boosting and flight.BoostAccelMultiplier or 1)
-		forwardSpeed += accel * dt
-	elseif throttle < 0 then
-		forwardSpeed -= flight.ThrottleDecel * dt
+	if boosting then
+		-- Boost: fly where the camera looks, building speed while held.
+		boostSpeed = math.min(
+			math.max(boostSpeed, flight.CruiseSpeed) + flight.BoostAccel * dt,
+			flight.BoostMaxSpeed
+		)
+		return aimOrientation.LookVector * boostSpeed
 	end
 
-	-- Air-brake pulls toward zero from EITHER direction. If it just subtracted, it
-	-- would accelerate you backwards once past zero, which is not a brake.
-	if braking then
-		local step = flight.BrakeDecel * dt
-		if forwardSpeed > 0 then
-			forwardSpeed = math.max(0, forwardSpeed - step)
-		elseif forwardSpeed < 0 then
-			forwardSpeed = math.min(0, forwardSpeed + step)
-		end
-	end
+	boostSpeed = 0
 
 	--[[
-		No blanket drag. Throttle is a SETPOINT: release W and you keep cruising.
-		A general drag term did nothing while the throttle was held (equilibrium
-		sat above MaxSpeed anyway) and merely forced you to hold W forever, which
-		S and Ctrl already cover deliberately.
-
-		Drag survives only where it has an actual job: bleeding off boost
-		overspeed. The clamp ceiling is always BoostMaxSpeed, and anything above
-		the currently-allowed max decays toward it. Clamping straight to MaxSpeed
-		instead would teleport speed 700 -> 400 the frame Shift is released.
+		Cruise: WASD on the camera's horizontal heading, Q/E world-vertical.
+		Yaw-only basis, so looking up or down does not tilt ground movement —
+		and it keeps W usable when staring at the sky.
 	]]
-	if forwardSpeed > maxSpeed then
-		local excess = forwardSpeed - maxSpeed
-		forwardSpeed = maxSpeed + excess * math.exp(-flight.OverspeedBleed * dt)
+	local heading = CFrame.fromEulerAnglesYXZ(0, yaw, 0)
+	local move = heading.LookVector * axis(flight.BackKey, flight.ForwardKey)
+		+ heading.RightVector * axis(flight.LeftKey, flight.RightKey)
+
+	local vertical = axis(flight.DownKey, flight.UpKey)
+
+	-- Horizontal and vertical are normalized separately so holding W+Q is not
+	-- faster than W alone on the horizontal plane.
+	local result = Vector3.zero
+	if move.Magnitude > 1e-3 then
+		result += move.Unit * flight.CruiseSpeed
+	end
+	if vertical ~= 0 then
+		result += Vector3.yAxis * (vertical * flight.VerticalSpeed)
 	end
 
-	-- S past zero reverses. Reverse has its own, much lower ceiling and is never
-	-- boosted: backing up at 700 studs/s is not a control scheme.
-	forwardSpeed = math.clamp(forwardSpeed, -flight.ReverseMaxSpeed, flight.BoostMaxSpeed)
-
-	-- Q climbs, E descends. Independent of throttle so you can hover-climb.
-	hoverSpeed = approachThrust(
-		hoverSpeed,
-		axis(flight.HoverDownKey, flight.HoverUpKey),
-		flight.HoverSpeed,
-		flight.HoverAccel,
-		flight.HoverDecel,
-		dt
-	)
-
-	strafeSpeed = approachThrust(
-		strafeSpeed,
-		axis(flight.StrafeLeftKey, flight.StrafeRightKey),
-		flight.StrafeSpeed,
-		flight.StrafeAccel,
-		flight.StrafeDecel,
-		dt
-	)
+	-- No input == hard stop. Exactly zero, same frame.
+	return result
 end
 
 --[[
 	Detect slamming something that does NOT break.
 
-	The constraint drives the assembly toward `velocity` every frame, so measured
-	speed tracks commanded speed closely — EXCEPT when a collision steals it.
-	A per-frame drop in measured speed above ImpactMinSpeedLoss therefore means
-	geometry stopped us, not the throttle. The threshold has to clear anything
-	brake/drag/carve-bleed could account for in one frame, which is why it sits
-	at 80 rather than something small.
-
-	Also bleeds the commanded speed down to what was actually achieved; without
-	that, the constraint would keep shoving the craft into the wall at full
-	throttle while the camera shook.
+	With velocity set directly, measured speed tracks commanded speed closely
+	except when a collision steals it. So the test is a SHORTFALL against what we
+	asked for, not a frame-over-frame drop: releasing the keys legitimately zeroes
+	velocity in one frame and must never read as a crash.
 ]]
-function FlightController:_detectImpact()
+function FlightController:_detectImpact(commandedSpeed: number)
+	lastImpactLoss = 0
+
 	if not root then
 		return
 	end
 
-	local measured = root.AssemblyLinearVelocity.Magnitude
-	local lost = lastMeasuredSpeed - measured
-	lastMeasuredSpeed = measured
+	local shake = Config.Shake
 
-	lastImpactLoss = 0
-	if lost < Config.Shake.ImpactMinSpeedLoss then
+	-- Only meaningful while we are actually asking to move fast.
+	if commandedSpeed < shake.ImpactMinSpeed or lastCommandedSpeed < shake.ImpactMinSpeed then
+		lastCommandedSpeed = commandedSpeed
 		return
 	end
 
-	lastImpactLoss = lost
-	forwardSpeed = math.clamp(forwardSpeed, -Config.Flight.ReverseMaxSpeed, measured)
+	local measured = root.AssemblyLinearVelocity.Magnitude
+	local shortfall = commandedSpeed - measured
+	lastCommandedSpeed = commandedSpeed
+
+	if measured >= commandedSpeed * shake.ImpactStallRatio then
+		return
+	end
+
+	lastImpactLoss = shortfall
+	boostSpeed = math.min(boostSpeed, measured)
 
 	if Camera then
-		Camera:ShakeImpact(lost)
+		Camera:ShakeImpact(shortfall)
 	end
 end
 
@@ -407,9 +358,9 @@ function FlightController:_update(dt: number)
 		return
 	end
 
-	self:_steer(dt)
-	self:_integrateThrust(dt)
-	self:_detectImpact()
+	self:_aim()
+	velocity = self:_move(dt)
+	self:_detectImpact(velocity.Magnitude)
 
 	-- Re-asserted every frame: the PlayerModule resets MouseBehavior on respawn
 	-- and on input-mode changes. Skipped while unlocked so the cursor stays free
@@ -419,37 +370,24 @@ function FlightController:_update(dt: number)
 		else Enum.MouseBehavior.Default
 
 	--[[
-		Desired velocity from the thrust axes. Hover is world-vertical, not
-		craft-relative: pitching the nose up must not turn "climb" into "climb and
-		drift backwards".
+		Body faces travel, eased. When stationary it holds its last facing rather
+		than snapping to a default, because a craft that whips around on stop
+		looks broken. Purely visual: it never feeds back into movement.
 	]]
-	local targetVelocity = orientation.LookVector * forwardSpeed
-		+ orientation.RightVector * strafeSpeed
-		+ Vector3.yAxis * hoverSpeed
+	if velocity.Magnitude > 1e-3 then
+		local target = CFrame.lookAt(Vector3.zero, velocity.Unit).Rotation
+		bodyOrientation = bodyOrientation
+			:Lerp(target, ease(Config.Flight.BodyTurnResponse, dt))
+			:Orthonormalize()
+	end
 
-	--[[
-		INERTIA. The actual velocity eases toward the target instead of being
-		snapped to it, which is what gives the craft mass:
-		  * releasing throttle or braking ramps down instead of stepping;
-		  * a hard turn carries momentum through the corner and drifts, rather
-		    than teleporting the whole velocity vector onto the new heading.
-
-		This is the thing passive drag was reaching for and could not provide —
-		drag only shrank the magnitude, it never decoupled velocity from facing.
-		Cruise still holds indefinitely because the TARGET holds; only the
-		approach to it is smoothed.
-	]]
-	velocity = velocity:Lerp(targetVelocity, ease(Config.Flight.VelocityResponse, dt))
-
-	-- Constraint strengths are re-pushed every frame, not just at rig build, so
-	-- the debug panel's sliders take effect without re-toggling flight. Three
-	-- property writes; irrelevant next to the physics step.
 	if linearVelocity then
+		-- Re-pushed every frame so the debug panel's slider applies live.
 		linearVelocity.MaxForce = Config.Flight.MaxThrustForce
 		linearVelocity.VectorVelocity = velocity
 	end
 	if alignOrientation then
-		alignOrientation.CFrame = orientation
+		alignOrientation.CFrame = bodyOrientation
 	end
 end
 
@@ -461,18 +399,30 @@ function FlightController:IsFlying(): boolean
 	return flying
 end
 
+-- Camera aim. CameraController builds its CFrame from this, NOT from the body.
+function FlightController:GetAimOrientation(): CFrame
+	return aimOrientation
+end
+
+-- Cosmetic body facing.
 function FlightController:GetOrientation(): CFrame
-	return orientation
+	return bodyOrientation
+end
+
+function FlightController:GetVelocity(): Vector3
+	return velocity
 end
 
 function FlightController:GetSpeed(): number
-	return forwardSpeed
+	return velocity.Magnitude
 end
 
--- Full world velocity including strafe and hover. Impact detection casts along
--- THIS, not LookVector: strafing or climbing into a wall must still carve.
-function FlightController:GetVelocity(): Vector3
-	return velocity
+function FlightController:IsBoosting(): boolean
+	return boosting
+end
+
+function FlightController:GetBoostSpeed(): number
+	return boostSpeed
 end
 
 -- Speed stolen by the most recent hard impact, 0 on any frame without one.
@@ -491,7 +441,7 @@ end
 --[[
 	Free or recapture the cursor. Pending mouse delta is dropped on every
 	transition: deltas accumulated while the cursor was travelling to a slider
-	must not be applied to the craft when capture resumes.
+	must not be applied to the camera when capture resumes.
 ]]
 function FlightController:SetMouseLocked(locked: boolean)
 	mouseLocked = locked
@@ -503,26 +453,12 @@ function FlightController:ToggleMouseLock()
 end
 
 --[[
-	Bleed speed off — called by FlightDestructionController when the craft
-	punches through geometry. Client-authoritative movement means the client
-	applies its own impact cost; the server only owns the destruction.
+	Bleed speed off — called by FlightDestructionController when the craft punches
+	through geometry. Only boost speed can be bled: cruise is a fixed set-speed
+	with no momentum to lose, so an impact cost there would just fight the input.
 ]]
 function FlightController:ApplySpeedLoss(amount: number)
-	local flight = Config.Flight
-
-	-- Bleed the MAGNITUDE toward zero rather than clamping against a floor.
-	-- Reverse is a negative forwardSpeed, so a floor would either be ignored in
-	-- reverse or, worse, accelerate a reversing craft forward on impact.
-	if forwardSpeed > 0 then
-		forwardSpeed = math.max(0, forwardSpeed - amount)
-	elseif forwardSpeed < 0 then
-		forwardSpeed = math.min(0, forwardSpeed + amount)
-	end
-
-	-- Lateral/vertical thrust bleeds too, or a sideways crash costs nothing.
-	local scale = math.max(0, 1 - amount / math.max(flight.MaxSpeed, 1))
-	strafeSpeed *= scale
-	hoverSpeed *= scale
+	boostSpeed = math.max(0, boostSpeed - amount)
 end
 
 --------------------------------------------------------------------------------
@@ -566,8 +502,8 @@ function FlightController:Start()
 		end
 	end)
 
-	-- Runs before the camera's own RenderStepped work so the camera reads a
-	-- fresh orientation in the same frame.
+	-- Runs before the camera's own render step so the camera reads this frame's
+	-- aim rather than the previous frame's.
 	RunService:BindToRenderStep("FlightController", Enum.RenderPriority.Camera.Value - 1, function(dt)
 		self:_update(dt)
 	end)

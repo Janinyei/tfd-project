@@ -12,70 +12,57 @@
 
 local FlightConfig = {}
 
+--[[
+	FLIGHT MODEL: camera-relative arcade movement, two modes.
+
+	CRUISE (no Shift) — WASD moves along the camera's heading on the horizontal
+	plane, Q/E moves world-vertical. Velocity is SET, not accelerated: full speed
+	on the first frame, and exactly zero the frame you release the keys. No
+	inertia, no drag, no coasting.
+
+	BOOST (hold Shift) — direction comes from where the camera is LOOKING,
+	including pitch, and speed accelerates from CruiseSpeed up to BoostMaxSpeed.
+	Releasing Shift drops straight back to cruise behaviour.
+
+	The craft body faces its travel direction; the camera is the aim, not a
+	follower of the nose.
+]]
 FlightConfig.Flight = {
-	-- Forward speed (studs/s)
-	BaseSpeed = 60, -- speed the moment you enter flight
-	-- S past zero flies backwards (reverse hover). Kept well below MaxSpeed:
-	-- reversing into a building you cannot see should not be a top-speed option.
-	ReverseMaxSpeed = 120,
-	MaxSpeed = 400,
+	-- Instant cruise speed (studs/s). Reached and lost in one frame.
+	CruiseSpeed = 120,
+	-- Vertical (Q/E) speed while cruising. Also instant.
+	VerticalSpeed = 100,
+
+	-- Boost accelerates along the camera look vector.
 	BoostMaxSpeed = 700,
-
-	ThrottleAccel = 180, -- studs/s^2 while holding throttle up
-	ThrottleDecel = 220, -- studs/s^2 while holding throttle down
-	BrakeDecel = 500, -- studs/s^2 while air-braking
-	-- No passive drag: throttle is a setpoint, so releasing W holds your speed.
-	-- This only bleeds boost OVERSPEED back down to MaxSpeed after Shift is
-	-- released, as an exponential rate (higher = snappier decay).
-	OverspeedBleed = 1.1,
-
-	--[[
-		Inertia: how fast real velocity chases the velocity the thrust axes ask
-		for, as an exponential rate (1 - exp(-k*dt)).
-		  high (20+) = weightless, velocity snaps onto the nose instantly
-		  ~6         = noticeable mass, drifts through hard turns
-		  low (2-3)  = heavy, floaty, wide arcs
-		This is what produces deceleration feel. It does NOT bleed cruise speed:
-		the target holds, so only the approach is smoothed.
-	]]
-	VelocityResponse = 6,
-
-	BoostAccelMultiplier = 2.2,
-
-	-- Vertical hover thrust (Q up / E down). Independent of forward throttle, so
-	-- you can climb while stationary.
-	HoverSpeed = 90, -- studs/s at full hold
-	HoverAccel = 320, -- studs/s^2 ramp toward HoverSpeed
-	HoverDecel = 260, -- studs/s^2 decay back to 0 when released
-
-	-- Lateral strafe thrust (A / D). Does not rotate the craft.
-	StrafeSpeed = 70,
-	StrafeAccel = 300,
-	StrafeDecel = 260,
+	BoostAccel = 420, -- studs/s^2 while Shift is held
 
 	-- Pitch is HARD CLAMPED, in degrees. Staying well clear of +-90 is what
 	-- removes the gimbal/singularity problem entirely: yaw and pitch can be
 	-- plain scalars, no quaternions or CFrame-delta integration needed.
-	MinPitch = -55, -- nose down
-	MaxPitch = 55, -- nose up
+	MinPitch = -75, -- look down
+	MaxPitch = 75, -- look up
 
-	-- Aim-style steering: RADIANS PER PIXEL of mouse delta, multiplied by the
-	-- user's MouseDeltaSensitivity. There is intentionally no speed term and no
-	-- rate smoothing anywhere, so the turn rate is identical at every speed and
-	-- the nose is wherever you aimed it the same frame.
+	-- Aim sensitivity: RADIANS PER PIXEL of mouse delta, multiplied by the user's
+	-- MouseDeltaSensitivity. No speed term and no smoothing, so look speed is
+	-- identical at every travel speed.
 	MouseSensitivity = 0.006,
-	-- Cap on the thrust force LinearVelocity may apply to hold target velocity.
+
+	-- How fast the BODY turns to face its travel direction, as an exponential
+	-- rate. Purely cosmetic: it never affects where you actually move.
+	BodyTurnResponse = 14,
+
+	-- Cap on the force LinearVelocity may apply to hold the target velocity.
 	MaxThrustForce = 500000,
 
 	ToggleKey = Enum.KeyCode.F,
 	BoostKey = Enum.KeyCode.LeftShift,
-	BrakeKey = Enum.KeyCode.LeftControl,
-	ThrottleUpKey = Enum.KeyCode.W,
-	ThrottleDownKey = Enum.KeyCode.S,
-	StrafeLeftKey = Enum.KeyCode.A,
-	StrafeRightKey = Enum.KeyCode.D,
-	HoverUpKey = Enum.KeyCode.Q,
-	HoverDownKey = Enum.KeyCode.E,
+	ForwardKey = Enum.KeyCode.W,
+	BackKey = Enum.KeyCode.S,
+	LeftKey = Enum.KeyCode.A,
+	RightKey = Enum.KeyCode.D,
+	UpKey = Enum.KeyCode.Q,
+	DownKey = Enum.KeyCode.E,
 	-- Frees the cursor so the debug panel (key 9) is clickable while flying.
 	MouseUnlockKey = Enum.KeyCode.Eight,
 }
@@ -132,10 +119,20 @@ FlightConfig.Shake = {
 	CarveFadeIn = 0.03,
 	CarveFadeOut = 0.35,
 
-	-- Slamming something that does NOT break. Detected as unexplained velocity
-	-- loss in a single frame (see FlightController._detectImpact), so the
-	-- threshold must sit above anything throttle/brake/drag/carve can produce.
-	ImpactMinSpeedLoss = 80,
+	--[[
+		Slamming something that does NOT break. Detected as a SHORTFALL: velocity
+		is set directly, so measured speed tracks the commanded speed unless
+		geometry steals it.
+
+		Not a frame-over-frame drop — releasing the keys zeroes velocity in one
+		frame by design and must never read as a crash.
+
+		ImpactMinSpeed   = only test while asking to move at least this fast.
+		ImpactStallRatio = measured/commanded below this counts as a hit; 0.5
+		                   means we lost over half the speed we asked for.
+	]]
+	ImpactMinSpeed = 150,
+	ImpactStallRatio = 0.5,
 	ImpactPerSpeedLoss = 0.006,
 	ImpactMax = 3,
 	ImpactRoughness = 16,

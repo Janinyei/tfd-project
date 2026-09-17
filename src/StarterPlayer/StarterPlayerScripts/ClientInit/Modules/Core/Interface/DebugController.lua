@@ -170,9 +170,13 @@ function DebugController:_render()
 
 	-- Iris states persist per widget across frames, so the slider keeps the value
 	-- the user set; the config is then written from it every frame.
-	local maxSpeedState = Iris.State(flight.MaxSpeed)
-	Iris.SliderNum({ "MaxSpeed", 10, 50, 1200 }, { number = maxSpeedState })
-	flight.MaxSpeed = maxSpeedState:get()
+	local boostSpeedState = Iris.State(flight.BoostMaxSpeed)
+	Iris.SliderNum({ "BoostMaxSpeed", 10, 100, 1600 }, { number = boostSpeedState })
+	flight.BoostMaxSpeed = boostSpeedState:get()
+
+	local cruiseSpeedState = Iris.State(flight.CruiseSpeed)
+	Iris.SliderNum({ "CruiseSpeed", 5, 20, 600 }, { number = cruiseSpeedState })
+	flight.CruiseSpeed = cruiseSpeedState:get()
 
 	local thrustState = Iris.State(flight.MaxThrustForce)
 	Iris.SliderNum({ "MaxThrustForce", 1000, 5000, 300000 }, { number = thrustState })
@@ -185,16 +189,16 @@ function DebugController:_render()
 	Iris.SeparatorText({ "Flight" })
 	line("Flying", Flight:IsFlying())
 	line("Mouse captured [8]", Flight:IsMouseLocked())
-	line("Forward speed", Flight:GetSpeed())
+	line("Boosting [Shift]", Flight:IsBoosting())
 	local velocity = Flight:GetVelocity()
 	line("Travel speed", velocity.Magnitude)
+	line("Boost speed", Flight:GetBoostSpeed())
 	line("Velocity", velocity)
 	line("Impact loss (this frame)", Flight:GetLastImpactLoss())
 
-	local orientation = Flight:GetOrientation()
-	local pitchRad, yawRad = orientation:ToEulerAnglesYXZ()
-	line("Pitch (deg)", math.deg(pitchRad))
-	line("Yaw (deg)", math.deg(yawRad))
+	local aimPitch, aimYaw = Flight:GetAimOrientation():ToEulerAnglesYXZ()
+	line("Aim pitch (deg)", math.deg(aimPitch))
+	line("Aim yaw (deg)", math.deg(aimYaw))
 	line("Pitch limit (deg)", flight.MaxPitch)
 
 	Iris.SeparatorText({ "Destruction" })

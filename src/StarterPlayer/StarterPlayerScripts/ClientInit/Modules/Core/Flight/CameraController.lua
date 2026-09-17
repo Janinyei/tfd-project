@@ -99,8 +99,9 @@ function CameraController:_update(dt: number)
 	-- (key 8) it must be visible to aim at the debug panel.
 	UserInputService.MouseIconEnabled = not Flight:IsMouseLocked()
 
-	-- Craft rotation has zero roll and clamped pitch, so it is used directly.
-	local targetRotation = Flight:GetOrientation()
+	-- The camera IS the aim: mouse drives this directly, and movement follows it.
+	-- Deliberately not the body facing, which only chases travel direction.
+	local targetRotation = Flight:GetAimOrientation()
 
 	if not initialized then
 		initialized = true
