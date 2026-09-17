@@ -188,8 +188,9 @@ function FlightDestructionController:_update(dt: number)
 
 	Camera:ShakeCarve(radius, speed)
 
-	-- Optimistic impact cost. Server owns destruction, client owns movement.
-	Flight:ApplySpeedLoss(destruction.SpeedLossPerCarve * radius + speed * destruction.SpeedLossSpeedScale)
+	-- No speed cost. Plowing through a building must not slow the craft: the
+	-- carve is the reward, and bleeding momentum on every wall made boosting
+	-- through a city feel like wading.
 end
 
 -- Live snapshot for DebugController's gizmos and readouts.

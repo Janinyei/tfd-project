@@ -16,7 +16,7 @@ local FlightConfig = {}
 	FLIGHT MODEL: camera-relative arcade movement, two modes.
 
 	CRUISE (no Shift) — WASD moves along the camera's heading on the horizontal
-	plane, Q/E moves world-vertical. Velocity is SET, not accelerated: full speed
+	plane, E\/Q moves world-vertical (E up, Q down). Velocity is SET, not accelerated: full speed
 	on the first frame, and exactly zero the frame you release the keys. No
 	inertia, no drag, no coasting.
 
@@ -61,8 +61,8 @@ FlightConfig.Flight = {
 	BackKey = Enum.KeyCode.S,
 	LeftKey = Enum.KeyCode.A,
 	RightKey = Enum.KeyCode.D,
-	UpKey = Enum.KeyCode.Q,
-	DownKey = Enum.KeyCode.E,
+	UpKey = Enum.KeyCode.E,
+	DownKey = Enum.KeyCode.Q,
 	-- Frees the cursor so the debug panel (key 9) is clickable while flying.
 	MouseUnlockKey = Enum.KeyCode.Eight,
 }
@@ -238,9 +238,8 @@ FlightConfig.Destruction = {
 	-- costs nothing to keep. See the FREEZE-AND-FORGET block in
 	-- VoxelDestructionService for the settle thresholds.
 
-	-- Speed cost of punching through, scaled by carved volume.
-	SpeedLossPerCarve = 0.9, -- speedLoss = SpeedLossPerCarve * carveRadius
-	SpeedLossSpeedScale = 0.10, -- + this fraction of current speed
+	-- No structural resistance: carving costs no speed. Flying through a building
+	-- is meant to feel like the building loses.
 
 	-- Client-side carve rate limit. Also enforced server-side.
 	MinCarveInterval = 0.06,

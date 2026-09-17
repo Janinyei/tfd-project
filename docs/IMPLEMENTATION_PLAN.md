@@ -48,7 +48,7 @@ vendored `Utils/Quaternion.luau` were both deleted — dead weight, not insuranc
 All modules syntax-checked with `luau-compile` 0.738. Not playtested — that's yours.
 
 Controls: `F` toggle flight, mouse yaw/pitch, `W` throttle up, `S` throttle down and
-**past zero into reverse** (`ReverseMaxSpeed` 120, never boosted), `Q`/`E` hover up/down,
+**past zero into reverse** (`ReverseMaxSpeed` 120, never boosted), `E`/`Q` up/down,
 `A`/`D` strafe, `Shift` boost, `Ctrl` air-brake (pulls toward zero from either direction).
 
 Collision: `CollisionGroupManager` registers `Players` + `Voxels` and disables the pair,
@@ -242,7 +242,7 @@ Cheap, high-payoff, after 1–3 work:
 1. **Player body** — plain character, no craft model.
 2. **Authority** — client-authoritative movement; server validates carve requests only. Exploit surface accepted for now.
 3. **Destruction trigger** — client spherecast → `Net.RequestCarve` → server carves and re-validates.
-4. **Flight model** — clamped pitch (±55°), no roll, `Q`/`E` world-vertical hover, `A`/`D` strafe.
+4. **Flight model** — clamped pitch (±55°), no roll, `E`/`Q` world-vertical hover, `A`/`D` strafe.
 5. **Map source** — `workspace.Map` folder, all descendants destructible (hand-built for now).
 
 ---

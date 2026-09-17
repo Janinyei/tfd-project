@@ -6,7 +6,7 @@
 
 	CRUISE (no Shift)
 		WASD moves along the camera's heading projected onto the horizontal plane,
-		Q/E moves world-vertical. Velocity is SET at full CruiseSpeed on the first
+		E\/Q moves world-vertical (E up, Q down). Velocity is SET at full CruiseSpeed on the first
 		frame and set to EXACTLY ZERO the frame all keys are released. No
 		acceleration, no inertia, no coasting — press to go, release to stop dead.
 
@@ -35,7 +35,6 @@
 		:IsBoosting()        -> boolean
 		:GetRoot()           -> BasePart?
 		:IsMouseLocked()     -> boolean
-		:ApplySpeedLoss(amount)
 ]]
 
 local Players = game:GetService("Players")
@@ -316,7 +315,7 @@ function FlightController:_move(dt: number): Vector3
 
 	local vertical = axis(flight.DownKey, flight.UpKey)
 
-	-- Horizontal and vertical are normalized separately so holding W+Q is not
+	-- Horizontal and vertical are normalized separately so holding W+E is not
 	-- faster than W alone on the horizontal plane.
 	local result = Vector3.zero
 	if move.Magnitude > 1e-3 then
@@ -361,8 +360,11 @@ function FlightController:_detectImpact(commandedSpeed: number)
 		return
 	end
 
+	-- Shake only. Speed is NOT bled here either: the commanded velocity stands,
+	-- so a graze that momentarily steals measured speed cannot drag the craft
+	-- down. Against genuinely indestructible geometry the constraint's force cap
+	-- is what stops you, not a scripted penalty.
 	lastImpactLoss = shortfall
-	boostSpeed = math.min(boostSpeed, measured)
 
 	if Camera then
 		Camera:ShakeImpact(shortfall)
@@ -505,15 +507,6 @@ end
 
 function FlightController:ToggleMouseLock()
 	self:SetMouseLocked(not mouseLocked)
-end
-
---[[
-	Bleed speed off — called by FlightDestructionController when the craft punches
-	through geometry. Only boost speed can be bled: cruise is a fixed set-speed
-	with no momentum to lose, so an impact cost there would just fight the input.
-]]
-function FlightController:ApplySpeedLoss(amount: number)
-	boostSpeed = math.max(0, boostSpeed - amount)
 end
 
 --------------------------------------------------------------------------------
