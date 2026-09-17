@@ -55,11 +55,13 @@ function CollisionGroupManager:_setupGroups()
 	PhysicsService:CollisionGroupSetCollidable(GROUP_PLAYERS, GROUP_DEFAULT, true)
 	PhysicsService:CollisionGroupSetCollidable(GROUP_PLAYERS, GROUP_PLAYERS, true)
 
-	-- EVERY voxel is solid to players, shell and debris alike. The original part
-	-- goes non-collidable on first hit and voxels take over collision, so any
-	-- non-collidable voxel group is a hole you can noclip through.
+	-- Shell IS solid to players: the original part stops colliding on first hit,
+	-- so the shell is the only thing keeping a damaged wall from being a noclip
+	-- hole.
 	PhysicsService:CollisionGroupSetCollidable(GROUP_PLAYERS, GROUP_VOXEL_SHELL, true)
-	PhysicsService:CollisionGroupSetCollidable(GROUP_PLAYERS, GROUP_VOXEL_DEBRIS, true)
+
+	-- Debris is NOT. Loose rubble should never body-block or shove the craft.
+	PhysicsService:CollisionGroupSetCollidable(GROUP_PLAYERS, GROUP_VOXEL_DEBRIS, false)
 
 	PhysicsService:CollisionGroupSetCollidable(GROUP_VOXEL_SHELL, GROUP_DEFAULT, true)
 	PhysicsService:CollisionGroupSetCollidable(GROUP_VOXEL_SHELL, GROUP_VOXEL_SHELL, true)

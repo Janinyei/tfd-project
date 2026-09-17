@@ -32,13 +32,24 @@ local DEBRIS_RENDER_DISTANCE = 220
 local VOXEL_CAPACITY = 4000
 
 --[[
-	Collision groups registered server-side by CollisionGroupManager and
-	replicated to clients. Shell = intact remainder of a damaged part, Debris =
-	launched/settled rubble. Both collide with players.
+	Collision groups, registered server-side by CollisionGroupManager and
+	replicated to clients.
 
-	Assignment is pcall-guarded: group registration replicates to the client
-	asynchronously, so a voxel created before the registry arrives would error on
-	assignment. Falling back to Default keeps it collidable either way.
+	  VoxelShell  — intact remainder of a damaged part. Solid to players.
+	  VoxelDebris — loose rubble. Collides with the map and other voxels so it
+	                piles and settles, but NOT with players: chunks pass straight
+	                through characters instead of body-blocking them.
+
+	Both stay CanCollide = true. The pass-through is done with the GROUP, not by
+	clearing CanCollide, because clearing it would also stop rubble colliding
+	with the ground and voxels it is supposed to rest on.
+
+	Assignment is pcall-guarded because group registration replicates to the
+	client asynchronously, so a voxel created before the registry arrives would
+	error. The fallback differs by intent: shell falls back to Default (still
+	solid, correct), debris falls back to CanCollide = false — passing through
+	everything is a far smaller visual error than briefly body-blocking the
+	player.
 ]]
 local SHELL_COLLISION_GROUP = "VoxelShell"
 local DEBRIS_COLLISION_GROUP = "VoxelDebris"
@@ -47,8 +58,13 @@ local function setCollisionGroup(part: BasePart, group: string)
 	local ok = pcall(function()
 		part.CollisionGroup = group
 	end)
-	if not ok then
-		part.CollisionGroup = "Default"
+	if ok then
+		return
+	end
+
+	part.CollisionGroup = "Default"
+	if group == DEBRIS_COLLISION_GROUP then
+		part.CanCollide = false
 	end
 end
 
@@ -308,7 +324,9 @@ function VoxelDestructionController:_onCreateBuffer(buf: buffer)
 			part.Material = material
 			part.Transparency = transparency
 			part.Anchored = true
-			part.CanCollide = collisionEnabled
+			-- Always true: rubble must collide with the map and other voxels so it
+			-- piles and settles. Passing through the PLAYER is the group's job.
+			part.CanCollide = true
 			part.CanQuery = true
 			part.CanTouch = false
 			part.CastShadow = false
@@ -409,9 +427,9 @@ function VoxelDestructionController:_onPhysics(buf: buffer?)
 			dynamicVisuals[id] = nil
 			entry.Part.CFrame = target
 			entry.Part.Anchored = true
-			-- Settled wreckage is static geometry now, so it moves to the shell
-			-- group and stays solid.
-			setCollisionGroup(entry.Part, SHELL_COLLISION_GROUP)
+			-- Stays in the debris group. Settled rubble is still rubble: promoting
+			-- it to the shell group would make wreckage piles body-block the
+			-- craft, which is exactly what the group split avoids.
 			entry.StartCFrame = target
 			entry.TargetCFrame = target
 			continue
