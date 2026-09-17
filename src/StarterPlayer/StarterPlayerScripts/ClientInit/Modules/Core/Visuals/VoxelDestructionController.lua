@@ -38,6 +38,10 @@ local VISUAL_COLLISION_GROUP = "Default"
 --------------------------------------------------------------------------------
 
 local FLAG_DYNAMIC = 1
+-- Physics-record flag (offset 20): this is the voxel's final transform. Anchor
+-- it, drop it from interpolation, keep it forever. Server-side counterpart is
+-- VoxelDestructionService._freezeVoxel.
+local FLAG_FREEZE = 1
 local STATIC_CREATE_BYTES = 39
 local DYNAMIC_CREATE_BYTES = 51
 local PHYSICS_UPDATE_BYTES = 21
@@ -372,6 +376,24 @@ function VoxelDestructionController:_onPhysics(buf: buffer?)
 		end
 
 		local target = readPhysicsCFrame(buf, baseOffset)
+
+		--[[
+			Freeze: the server has anchored this chunk and will never send another
+			transform for it. Snap to the authoritative final pose, take it out of
+			the interpolation set, and leave it as permanent wreckage.
+
+			Must snap rather than lerp: no further snapshots arrive, so an
+			interpolated entry would stall partway to its final pose.
+		]]
+		if bit32.band(buffer.readu8(buf, baseOffset + 20), FLAG_FREEZE) ~= 0 then
+			entry.Dynamic = false
+			dynamicVisuals[id] = nil
+			entry.Part.CFrame = target
+			entry.Part.Anchored = true
+			entry.StartCFrame = target
+			entry.TargetCFrame = target
+			continue
+		end
 
 		if interpolation then
 			if (entry.Part.Position - target.Position).Magnitude > 25 then

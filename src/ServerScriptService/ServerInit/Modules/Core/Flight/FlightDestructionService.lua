@@ -102,7 +102,6 @@ function FlightDestructionService:_onRequestCarve(
 	Voxel:DestroyArea(position, radius, direction.Unit, Config.GetDebrisForce(speed), {
 		MinVoxelSize = minVoxelSize,
 		ResetTime = destruction.ResetTime,
-		DebrisLifetime = destruction.DebrisLifetime,
 	})
 end
 

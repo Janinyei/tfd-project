@@ -218,10 +218,10 @@ FlightConfig.Destruction = {
 		seconds to bring healing back.
 	]]
 	ResetTime = 0,
-	-- Loose rubble is still collected after this many seconds. The structural
-	-- damage stays; only the flying chunks are recycled, so debris cannot pile up
-	-- against the sim-part pool (4000) or keep costing 20Hz physics snapshots.
-	DebrisLifetime = 12,
+	-- Settled rubble is frozen in place, not deleted: it is anchored (out of the
+	-- physics solver) and dropped from the snapshot stream, so permanent wreckage
+	-- costs nothing to keep. See the FREEZE-AND-FORGET block in
+	-- VoxelDestructionService for the settle thresholds.
 
 	-- Speed cost of punching through, scaled by carved volume.
 	SpeedLossPerCarve = 0.9, -- speedLoss = SpeedLossPerCarve * carveRadius

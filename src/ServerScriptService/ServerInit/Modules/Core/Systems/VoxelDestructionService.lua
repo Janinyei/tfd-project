@@ -42,10 +42,32 @@ local DESTRUCTIBLE_CONTAINER_NAMES = {
 local DEFAULT_MIN_VOXEL_SIZE = 3
 -- 0 == never regenerate. Destruction in this game is permanent.
 local DEFAULT_RESET_TIME = 0
--- Rubble is still collected: permanent damage is the design, permanently
--- simulated debris is a resource leak.
-local DEFAULT_DEBRIS_LIFETIME = 12
 local DEFAULT_DEBRIS_FORCE = 30
+
+--[[
+	FREEZE-AND-FORGET.
+
+	Debris is not deleted on a timer — wreckage is permanent. Instead a chunk that
+	has come to rest is ANCHORED, which removes it from the physics solver
+	entirely (only non-anchored assemblies are stepped, at up to 240Hz), and is
+	dropped from the 20Hz snapshot stream. It stays visible forever at no
+	simulation or bandwidth cost.
+
+	A chunk is considered at rest once it stays under both thresholds for
+	SETTLE_TIME. FORCE_FREEZE_TIME is the backstop for chunks that jitter or
+	balance forever and never satisfy that.
+]]
+local SETTLE_LINEAR_SPEED = 3.5
+local SETTLE_ANGULAR_SPEED = 3.5
+local SETTLE_TIME = 0.3
+local FORCE_FREEZE_TIME = 8
+
+--[[
+	The sim-part pool is finite (SIM_PART_CAPACITY) and wreckage never expires, so
+	frozen rubble is recycled oldest-first ONLY under pool pressure — not on a
+	lifetime. Below the threshold nothing is ever reclaimed.
+]]
+local FROZEN_EVICTION_THRESHOLD = 0.85
 
 local MAX_SUBDIVISIONS = 2000
 
@@ -89,6 +111,9 @@ local DEBRIS_COLLISION_GROUP = "VoxelDebris"
 --------------------------------------------------------------------------------
 
 local FLAG_DYNAMIC = 1
+-- Physics-record flag (offset 20): final transform, client should anchor and
+-- stop interpolating this voxel. See _freezeVoxel.
+local FLAG_FREEZE = 1
 local STATIC_CREATE_BYTES = 39
 local DYNAMIC_CREATE_BYTES = 51
 local PHYSICS_UPDATE_BYTES = 21
@@ -101,6 +126,15 @@ local managedParts = {}
 
 local activeVoxels = {}
 local activeDynamicVoxels = {}
+
+--[[
+	Frozen rubble, oldest first. Anchored, unsimulated, unreplicated after the
+	one-off freeze sync — only consuming a pooled part. Drained from the front
+	when the pool comes under pressure.
+]]
+local frozenOrder = {}
+local frozenHead = 1
+local frozenCount = 0
 
 local nextSessionKey = 0
 
@@ -517,21 +551,165 @@ end
 
 
 
-function VoxelDestructionService:_tickPhysics()
-    local liveCount = 0
-    local orphanIds = {}
+--[[
+	Anchor a settled chunk: out of the solver, out of the snapshot stream, still
+	visible forever.
 
-    for id, entry in activeDynamicVoxels do
-        local part = entry.Part
-        if not part or not part.Parent then
-            table.insert(orphanIds, id)
-        else
-            liveCount += 1
-            -- Always poke to prevent sleep, alternating direction to avoid drift
-            local poke = (id % 2 == 0) and 0.001 or -0.001
-            part.AssemblyAngularVelocity = part.AssemblyAngularVelocity + Vector3.new(poke, 0, 0)
-        end
-    end
+	Clients are told through the PHYSICS record, using the flag byte at offset 20
+	that the format already carries and never used (always written 0). Flag 1
+	means "this is the final transform, stop interpolating, anchor it".
+
+	Deliberately NOT done as cleanup + static create on the sync channel: a
+	cleanup of a dynamic id starts a 1s fade on the client and LEAVES voxels[id]
+	populated, so a create reusing the same id overwrites the entry and the fading
+	part is never returned to the cache. That path leaks pooled parts and
+	double-draws the chunk while it fades. The flag costs 0 extra bytes.
+]]
+function VoxelDestructionService:_freezeVoxel(id: number, entry)
+	local part = entry.Part
+	if not part or not part.Parent then
+		return
+	end
+
+	part.AssemblyLinearVelocity = Vector3.zero
+	part.AssemblyAngularVelocity = Vector3.zero
+	part.Anchored = true
+
+	entry.Dynamic = false
+	entry.Frozen = true
+	activeDynamicVoxels[id] = nil
+
+	frozenOrder[frozenHead + frozenCount] = id
+	frozenCount += 1
+
+	return {
+		Id = id,
+		CFrame = part.CFrame,
+	}
+end
+
+-- One buffer carrying every freeze this tick, in the physics record format with
+-- FLAG_FREEZE set.
+function VoxelDestructionService:_fireFreeze(frozen: { any })
+	local buf = buffer.create(#frozen * PHYSICS_UPDATE_BYTES)
+	local offset = 0
+
+	for _, item in frozen do
+		local cf = item.CFrame
+		local pos = cf.Position
+		local rx, ry, rz = cf:ToOrientation()
+
+		buffer.writeu16(buf, offset + 0, item.Id)
+		buffer.writef32(buf, offset + 2, pos.X)
+		buffer.writef32(buf, offset + 6, pos.Y)
+		buffer.writef32(buf, offset + 10, pos.Z)
+		buffer.writei16(buf, offset + 14, clampI16Scaled(math.deg(rx), 100))
+		buffer.writei16(buf, offset + 16, clampI16Scaled(math.deg(ry), 100))
+		buffer.writei16(buf, offset + 18, clampI16Scaled(math.deg(rz), 100))
+		buffer.writeu8(buf, offset + 20, FLAG_FREEZE)
+
+		offset += PHYSICS_UPDATE_BYTES
+	end
+
+	_voxelPhysicsEvent:FireAllClients(buf)
+end
+
+--[[
+	Recycle the oldest frozen rubble, but ONLY when the pool is nearly exhausted.
+	Wreckage is permanent by design; a lifetime timer would delete holes and
+	rubble the player is still looking at. Pressure-driven eviction instead means
+	nothing disappears until the alternative is failing to carve at all.
+]]
+function VoxelDestructionService:_evictFrozenUnderPressure()
+	local limit = math.floor(SIM_PART_CAPACITY * FROZEN_EVICTION_THRESHOLD)
+	local used = 0
+	for _ in activeVoxels do
+		used += 1
+	end
+
+	local evictedIds = nil
+
+	while used > limit and frozenCount > 0 do
+		local id = frozenOrder[frozenHead]
+		frozenOrder[frozenHead] = nil
+		frozenHead += 1
+		frozenCount -= 1
+
+		local entry = self:_extractActiveVoxel(id)
+		if entry then
+			self:_returnVoxelEntry(entry)
+			self:_queueFreeVoxelId(id, ID_REUSE_DELAY)
+			evictedIds = evictedIds or {}
+			table.insert(evictedIds, id)
+			used -= 1
+		end
+	end
+
+	if evictedIds then
+		self:_fireSync(evictedIds, nil)
+	end
+end
+
+function VoxelDestructionService:_tickPhysics()
+	local liveCount = 0
+	local orphanIds = {}
+	local freezeIds = nil
+	local frozenRecords = nil
+	local now = os.clock()
+
+	--[[
+		No anti-sleep poking. The previous implementation nudged every chunk's
+		angular velocity every tick specifically to stop Roblox putting it to
+		sleep, which kept thousands of resting chunks permanently in the solver at
+		up to 240Hz AND permanently in the snapshot stream. Resting debris is
+		exactly what we want the engine to stop simulating.
+	]]
+	for id, entry in activeDynamicVoxels do
+		local part = entry.Part
+		if not part or not part.Parent then
+			table.insert(orphanIds, id)
+			continue
+		end
+
+		local atRest = part.AssemblyLinearVelocity.Magnitude < SETTLE_LINEAR_SPEED
+			and part.AssemblyAngularVelocity.Magnitude < SETTLE_ANGULAR_SPEED
+
+		if atRest then
+			entry.RestClock = (entry.RestClock or 0) + PHYSICS_SNAPSHOT_INTERVAL
+		else
+			entry.RestClock = 0
+		end
+
+		local settled = (entry.RestClock or 0) >= SETTLE_TIME
+		-- Backstop for chunks that never stop jittering or stay balanced.
+		local expired = entry.SpawnClock and (now - entry.SpawnClock) >= FORCE_FREEZE_TIME
+
+		if settled or expired then
+			freezeIds = freezeIds or {}
+			table.insert(freezeIds, id)
+		else
+			liveCount += 1
+		end
+	end
+
+	if freezeIds then
+		for _, id in freezeIds do
+			local entry = activeDynamicVoxels[id]
+			if entry then
+				local record = self:_freezeVoxel(id, entry)
+				if record then
+					frozenRecords = frozenRecords or {}
+					table.insert(frozenRecords, record)
+				end
+			end
+		end
+
+		if frozenRecords then
+			self:_fireFreeze(frozenRecords)
+		end
+
+		self:_evictFrozenUnderPressure()
+	end
 
 
 	if liveCount > 0 then
@@ -841,8 +1019,8 @@ function VoxelDestructionService:_destroyVolume(
 		  <= 0 / inf   -> PERMANENT. resetTime stays nil and no regen is ever
 		                  scheduled, so the hole and its shell persist for the
 		                  lifetime of the server.
-		Debris is cleaned up on DebrisLifetime either way — permanent structural
-		damage is the design, permanently-simulated rubble is just a leak.
+		Debris is never deleted on a timer: settled chunks freeze in place
+		(anchored, unsimulated, unreplicated) and stay as permanent wreckage.
 	]]
 	local requestedReset = options.ResetTime or DEFAULT_RESET_TIME
 	local resetTime: number? = requestedReset
@@ -850,7 +1028,7 @@ function VoxelDestructionService:_destroyVolume(
 		resetTime = nil
 	end
 
-	local debrisLifetime = options.DebrisLifetime or DEFAULT_DEBRIS_LIFETIME
+
 	local launchDir = safeUnit(direction)
 	local launchForce = force or DEFAULT_DEBRIS_FORCE
 
@@ -918,7 +1096,6 @@ function VoxelDestructionService:_destroyVolume(
 			OriginalPart = part,
 			-- nil ResetTime == permanent (see _destroyVolume).
 			ResetTime = resetTime,
-			DebrisLifetime = debrisLifetime,
 			DynamicIds = {},
 		}
 
@@ -1045,6 +1222,15 @@ function VoxelDestructionService:_destroyVolume(
 					Part = simPart,
 					Dynamic = true,
 					OriginalPart = part,
+					-- Kept so _freezeVoxel can re-emit this chunk as a static
+					-- create entry without re-reading the (possibly recycled)
+					-- source part.
+					Size = pieceSize,
+					Color = partColor,
+					Material = partMaterial,
+					Transparency = partTransparency,
+					SpawnClock = os.clock(),
+					RestClock = 0,
 				}
 				activeDynamicVoxels[id] = activeVoxels[id]
 
@@ -1131,11 +1317,13 @@ function VoxelDestructionService:_destroyVolume(
 				self:_regenSession(session)
 			end)
 		else
-			-- Permanent carve: the hole never heals, so only the loose rubble is
-			-- collected. The static shell and the carved volume stay forever.
-			task.delay(session.DebrisLifetime, function()
-				self:_clearSessionDebris(session)
-			end)
+			--[[
+				Permanent carve: nothing is scheduled at all. The hole never
+				heals, and the rubble is not deleted on a timer either — each
+				chunk freezes itself once it settles (see _tickPhysics), which
+				takes it out of the solver and off the wire while leaving it
+				visible. Pool pressure, not time, is what eventually recycles it.
+			]]
 		end
 	end
 end
