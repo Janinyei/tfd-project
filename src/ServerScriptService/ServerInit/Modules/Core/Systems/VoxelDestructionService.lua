@@ -1079,7 +1079,7 @@ function VoxelDestructionService:_destroyVolume(
 	end
 
 	if #partsToProcess == 0 then
-		return
+		return 0
 	end
 
 	local allCreateEntries = {}
@@ -1340,6 +1340,14 @@ function VoxelDestructionService:_destroyVolume(
 			]]
 		end
 	end
+
+	--[[
+		Number of voxels actually knocked out of the structure this call, i.e.
+		pieces that became debris. Static shell voxels are excluded: they are the
+		part that SURVIVED, so counting them would inflate the stat every time a
+		shell is rebuilt around an existing hole.
+	]]
+	return #dynamicActivations
 end
 
 --------------------------------------------------------------------------------

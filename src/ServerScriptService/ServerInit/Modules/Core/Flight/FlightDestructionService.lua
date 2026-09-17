@@ -26,6 +26,7 @@ local Core
 local Config
 local Net
 local Voxel
+local Stats
 
 -- player -> os.clock() of last accepted carve
 local lastCarve: { [Player]: number } = {}
@@ -104,10 +105,17 @@ function FlightDestructionService:_onRequestCarve(
 
 	lastCarve[player] = now
 
-	Voxel:DestroyArea(position, radius, direction.Unit, Config.GetDebrisForce(speed), {
+	-- Returns how many voxels were knocked loose, so the stat counts real
+	-- destruction rather than carve requests: a carve that hit nothing, or hit a
+	-- region already hollowed out, credits zero.
+	local destroyed = Voxel:DestroyArea(position, radius, direction.Unit, Config.GetDebrisForce(speed), {
 		MinVoxelSize = minVoxelSize,
 		ResetTime = destruction.ResetTime,
 	})
+
+	if destroyed and destroyed > 0 then
+		Stats:AddVoxelsDestroyed(player, destroyed)
+	end
 end
 
 function FlightDestructionService:Init(core)
@@ -118,6 +126,7 @@ function FlightDestructionService:Start()
 	Config = Core:Get("FlightConfig")
 	Net = Core:Get("Net")
 	Voxel = Core:Get("VoxelDestructionService")
+	Stats = Core:Get("StatsService")
 
 	Net.RequestCarve.OnServerEvent:Connect(function(player, position, radius, direction, speed)
 		self:_onRequestCarve(player, position, radius, direction, speed)
