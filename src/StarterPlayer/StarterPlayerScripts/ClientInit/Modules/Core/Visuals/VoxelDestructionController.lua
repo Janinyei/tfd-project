@@ -86,11 +86,18 @@ local PHYSICS_UPDATE_BYTES = 21
 --------------------------------------------------------------------------------
 
 VoxelDestructionController.InterpolationEnabled = true
--- OFF: client voxels are cosmetic only. The server's sim parts own collision,
--- and they sit in the "Voxels" group which cannot collide with players — a
--- locally-collidable copy would reintroduce exactly the body-blocking this
--- avoids, and only for the local player.
-VoxelDestructionController.ClientCollisionEnabled = false
+--[[
+	ON, and it MUST be on for static voxels to be solid.
+
+	The local character is client-owned, so ITS collisions are resolved against
+	the CLIENT's parts. The server's sim shell cannot stop a client-authoritative
+	character — with this off, every static voxel was a ghost locally no matter
+	how solid the server copy was. That was the fly-through-walls bug.
+
+	Debris ignores this flag: it is always CanCollide = true and relies on the
+	VoxelDebris collision group to pass through characters.
+]]
+VoxelDestructionController.ClientCollisionEnabled = true
 
 --------------------------------------------------------------------------------
 -- STATE
@@ -485,11 +492,18 @@ function VoxelDestructionController:SetInterpolation(enabled: boolean)
 	self.InterpolationEnabled = enabled
 end
 
+--[[
+	Toggles collision for STATIC voxels only. Debris is unconditionally
+	CanCollide = true and passes through characters via its collision group, so
+	flipping it here would break rubble resting on the ground.
+]]
 function VoxelDestructionController:SetClientCollision(enabled: boolean)
 	self.ClientCollisionEnabled = enabled
 
 	for _, entry in voxels do
-		entry.Part.CanCollide = enabled
+		if not entry.Dynamic then
+			entry.Part.CanCollide = enabled
+		end
 	end
 end
 
