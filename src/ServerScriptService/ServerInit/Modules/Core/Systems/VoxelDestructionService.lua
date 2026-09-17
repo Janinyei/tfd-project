@@ -97,7 +97,12 @@ local DEBUG_DURATION = 10
 local PHYSICS_SNAPSHOT_RATE = 20
 local PHYSICS_SNAPSHOT_INTERVAL = 1 / PHYSICS_SNAPSHOT_RATE
 
-local DEBRIS_FADE_DURATION = 1
+--[[
+	Grace period before a removed debris part is recycled and its id reused. The
+	client no longer fades anything, so this only has to outlast in-flight
+	replication of the cleanup — not an animation.
+]]
+local DEBRIS_RECYCLE_DELAY = 0.1
 local ID_REUSE_DELAY = 1.25
 
 local SIM_PART_CAPACITY = 4000
@@ -1416,7 +1421,7 @@ function VoxelDestructionService:_clearSessionDebris(session)
 
 		table.insert(delayedReturns, entry)
 		table.insert(dynamicCleanupIds, id)
-		self:_queueFreeVoxelId(id, DEBRIS_FADE_DURATION + ID_REUSE_DELAY)
+		self:_queueFreeVoxelId(id, DEBRIS_RECYCLE_DELAY + ID_REUSE_DELAY)
 	end
 
 	table.clear(session.DynamicIds)
@@ -1426,7 +1431,7 @@ function VoxelDestructionService:_clearSessionDebris(session)
 	end
 
 	if #delayedReturns > 0 then
-		task.delay(DEBRIS_FADE_DURATION, function()
+		task.delay(DEBRIS_RECYCLE_DELAY, function()
 			for _, entry in delayedReturns do
 				self:_returnVoxelEntry(entry)
 			end

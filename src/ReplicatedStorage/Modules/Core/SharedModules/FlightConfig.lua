@@ -29,13 +29,13 @@ local FlightConfig = {}
 ]]
 FlightConfig.Flight = {
 	-- Instant cruise speed (studs/s). Reached and lost in one frame.
-	CruiseSpeed = 120,
+	CruiseSpeed = 30,
 	-- Vertical (Q/E) speed while cruising. Also instant.
-	VerticalSpeed = 100,
+	VerticalSpeed = 50,
 
 	-- Boost accelerates along the camera look vector.
 	BoostMaxSpeed = 700,
-	BoostAccel = 420, -- studs/s^2 while Shift is held
+	BoostAccel = 200, -- studs/s^2 while Shift is held
 
 	-- Pitch is HARD CLAMPED, in degrees. Staying well clear of +-90 is what
 	-- removes the gimbal/singularity problem entirely: yaw and pitch can be
@@ -92,7 +92,7 @@ FlightConfig.Camera = {
 	-- Extra studs of pullback per stud/s of speed. Applied ONLY while boosting,
 	-- so the stretch reads as speed rather than becoming the default framing.
 	DistanceSpeedScale = 0.03,
-	MaxDistance = 44,
+	MaxDistance = 25,
 	DistanceResponse = 3,
 
 	--[[

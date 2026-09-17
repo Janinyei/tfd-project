@@ -13,7 +13,6 @@ local VoxelDestructionController = {}
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
 
 local PartCache = require(ReplicatedStorage.Modules.Packages.PartCache)
 
@@ -26,7 +25,6 @@ local NetworkKeys
 --------------------------------------------------------------------------------
 
 local PHYSICS_SNAPSHOT_INTERVAL = 1 / 20
-local DEBRIS_FADE_DURATION = 1
 local DEBRIS_RENDER_DISTANCE = 220
 
 local VOXEL_CAPACITY = 4000
@@ -208,10 +206,6 @@ function VoxelDestructionController:_evictVoxel(id: number)
 		dynamicVisuals[id] = nil
 	end
 
-	if entry.FadeTween then
-		entry.FadeTween:Cancel()
-	end
-
 	local part = entry.Part
 	part.Transparency = 0
 	part.Anchored = true
@@ -236,43 +230,27 @@ function VoxelDestructionController:_onSync(cleanupBuffer: buffer?, createBuffer
 	end
 end
 
+--[[
+	Cleanup is ALWAYS immediate, for debris and shell alike.
+
+	There used to be a 1s TweenService transparency fade for dynamic voxels. It
+	is gone for three reasons:
+	  * destruction is permanent (ResetTime = 0), so debris is never removed on a
+	    schedule — the only cleanups left are orphan collection and pool-pressure
+	    eviction, neither of which should be advertised with an animation;
+	  * a fading part stayed in `voxels[id]` for a full second, so if the server
+	    reused that id the create overwrote the entry, the tween's
+	    `voxels[id] == thisEntry` guard failed, and the part was never returned to
+	    the cache — a pooled-part leak;
+	  * it rendered a second, ghostly copy of a chunk that had already been
+	    superseded, which is confusing to look at.
+]]
 function VoxelDestructionController:_onCleanupBuffer(buf: buffer)
 	local count = buffer.len(buf) / 2
 
 	for i = 1, count do
 		local id = buffer.readu16(buf, (i - 1) * 2)
-		local entry = voxels[id]
-		if not entry then
-			continue
-		end
-
-		if entry.Dynamic then
-			if entry.Fading then
-				continue
-			end
-
-			entry.Fading = true
-			dynamicVisuals[id] = nil
-
-			if entry.FadeTween then
-				entry.FadeTween:Cancel()
-			end
-
-			entry.FadeTween = TweenService:Create(
-				entry.Part,
-				TweenInfo.new(DEBRIS_FADE_DURATION, Enum.EasingStyle.Linear),
-				{ Transparency = 1 }
-			)
-
-			local thisEntry = entry
-			entry.FadeTween.Completed:Once(function()
-				if voxels[id] == thisEntry then
-					self:_evictVoxel(id)
-				end
-			end)
-
-			entry.FadeTween:Play()
-		else
+		if voxels[id] then
 			self:_evictVoxel(id)
 		end
 	end
@@ -346,8 +324,6 @@ function VoxelDestructionController:_onCreateBuffer(buf: buffer)
 				StartCFrame = cf,
 				TargetCFrame = cf,
 				LastSnapshotTime = os.clock(),
-				FadeTween = nil,
-				Fading = false,
 			}
 			dynamicVisuals[id] = voxels[id]
 
@@ -376,8 +352,6 @@ function VoxelDestructionController:_onCreateBuffer(buf: buffer)
 				StartCFrame = cf,
 				TargetCFrame = cf,
 				LastSnapshotTime = 0,
-				FadeTween = nil,
-				Fading = false,
 			}
 
 			table.insert(bulkParts, part)
@@ -415,7 +389,7 @@ function VoxelDestructionController:_onPhysics(buf: buffer?)
 		local id = buffer.readu16(buf, baseOffset + 0)
 
 		local entry = voxels[id]
-		if not entry or not entry.Dynamic or entry.Fading then
+		if not entry or not entry.Dynamic then
 			continue
 		end
 
@@ -475,10 +449,6 @@ function VoxelDestructionController:_renderDynamicVisuals()
 	local now = os.clock()
 
 	for _, entry in dynamicVisuals do
-		if entry.Fading then
-			continue
-		end
-
 		local alpha = math.clamp((now - entry.LastSnapshotTime) / PHYSICS_SNAPSHOT_INTERVAL, 0, 1)
 		entry.Part.CFrame = entry.StartCFrame:Lerp(entry.TargetCFrame, alpha)
 	end
