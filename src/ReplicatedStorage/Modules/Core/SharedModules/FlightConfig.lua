@@ -164,8 +164,8 @@ FlightConfig.Destruction = {
 		is what actually "makes up for lag" — it scales with the real measured
 		round trip instead of a guess.
 	]]
-	ProbeRadius = 2.5,
-	LeadFactor = 5.0,
+	ProbeRadius = 5,
+	LeadFactor = 10,
 	-- Multiplier on measured round-trip time. GetNetworkPing() reports one-way
 	-- seconds, so 2.0 covers the full round trip.
 	PingLeadFactor = 2.0,
@@ -198,7 +198,16 @@ FlightConfig.Destruction = {
 	DebrisForcePerSpeed = 0.35,
 	DebrisForceMax = 260,
 
-	ResetTime = 8,
+	--[[
+		0 == PERMANENT. Carved geometry never regenerates; the hole and the shell
+		around it persist for the lifetime of the server. Set a positive number of
+		seconds to bring healing back.
+	]]
+	ResetTime = 0,
+	-- Loose rubble is still collected after this many seconds. The structural
+	-- damage stays; only the flying chunks are recycled, so debris cannot pile up
+	-- against the sim-part pool (4000) or keep costing 20Hz physics snapshots.
+	DebrisLifetime = 12,
 
 	-- Speed cost of punching through, scaled by carved volume.
 	SpeedLossPerCarve = 0.9, -- speedLoss = SpeedLossPerCarve * carveRadius

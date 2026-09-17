@@ -40,7 +40,11 @@ local DESTRUCTIBLE_CONTAINER_NAMES = {
 }
 
 local DEFAULT_MIN_VOXEL_SIZE = 3
-local DEFAULT_RESET_TIME = 5
+-- 0 == never regenerate. Destruction in this game is permanent.
+local DEFAULT_RESET_TIME = 0
+-- Rubble is still collected: permanent damage is the design, permanently
+-- simulated debris is a resource leak.
+local DEFAULT_DEBRIS_LIFETIME = 12
 local DEFAULT_DEBRIS_FORCE = 30
 
 local MAX_SUBDIVISIONS = 2000
@@ -830,7 +834,23 @@ function VoxelDestructionService:_destroyVolume(
 	options = options or {}
 
 	local minVoxelSize = options.MinVoxelSize or DEFAULT_MIN_VOXEL_SIZE
-	local resetTime = options.ResetTime or DEFAULT_RESET_TIME
+
+	--[[
+		ResetTime semantics:
+		  nil          -> DEFAULT_RESET_TIME
+		  <= 0 / inf   -> PERMANENT. resetTime stays nil and no regen is ever
+		                  scheduled, so the hole and its shell persist for the
+		                  lifetime of the server.
+		Debris is cleaned up on DebrisLifetime either way — permanent structural
+		damage is the design, permanently-simulated rubble is just a leak.
+	]]
+	local requestedReset = options.ResetTime or DEFAULT_RESET_TIME
+	local resetTime: number? = requestedReset
+	if requestedReset <= 0 or requestedReset == math.huge then
+		resetTime = nil
+	end
+
+	local debrisLifetime = options.DebrisLifetime or DEFAULT_DEBRIS_LIFETIME
 	local launchDir = safeUnit(direction)
 	local launchForce = force or DEFAULT_DEBRIS_FORCE
 
@@ -896,7 +916,9 @@ function VoxelDestructionService:_destroyVolume(
 		local session = {
 			Key = sessionKey,
 			OriginalPart = part,
+			-- nil ResetTime == permanent (see _destroyVolume).
 			ResetTime = resetTime,
+			DebrisLifetime = debrisLifetime,
 			DynamicIds = {},
 		}
 
@@ -1104,15 +1126,73 @@ function VoxelDestructionService:_destroyVolume(
 	self:_fireSync(allCleanupIds, allCreateEntries)
 
 	for _, session in sessionsCreated do
-		task.delay(session.ResetTime, function()
-			self:_regenSession(session)
-		end)
+		if session.ResetTime then
+			task.delay(session.ResetTime, function()
+				self:_regenSession(session)
+			end)
+		else
+			-- Permanent carve: the hole never heals, so only the loose rubble is
+			-- collected. The static shell and the carved volume stay forever.
+			task.delay(session.DebrisLifetime, function()
+				self:_clearSessionDebris(session)
+			end)
+		end
 	end
 end
 
 --------------------------------------------------------------------------------
 -- REGEN
 --------------------------------------------------------------------------------
+
+--[[
+	Remove a session's dynamic debris and recycle its sim parts.
+
+	Split out of _regenSession because permanent destruction still has to clean up
+	rubble: with regeneration disabled, debris would otherwise hold sim parts
+	forever against SIM_PART_CAPACITY and keep costing a 20Hz physics snapshot
+	each. Structure stays gone; only the loose chunks are collected.
+]]
+function VoxelDestructionService:_clearSessionDebris(session)
+	if #session.DynamicIds == 0 then
+		return
+	end
+
+	local dynamicCleanupIds = {}
+	local delayedReturns = {}
+
+	for _, id in session.DynamicIds do
+		local entry = self:_extractActiveVoxel(id)
+		if not entry then
+			continue
+		end
+
+		local partRef = entry.Part
+		partRef.Anchored = true
+		partRef.CanCollide = false
+		partRef.CanQuery = false
+		partRef.CanTouch = false
+		partRef.AssemblyLinearVelocity = Vector3.zero
+		partRef.AssemblyAngularVelocity = Vector3.zero
+
+		table.insert(delayedReturns, entry)
+		table.insert(dynamicCleanupIds, id)
+		self:_queueFreeVoxelId(id, DEBRIS_FADE_DURATION + ID_REUSE_DELAY)
+	end
+
+	table.clear(session.DynamicIds)
+
+	if #dynamicCleanupIds > 0 then
+		self:_fireSync(dynamicCleanupIds, nil)
+	end
+
+	if #delayedReturns > 0 then
+		task.delay(DEBRIS_FADE_DURATION, function()
+			for _, entry in delayedReturns do
+				self:_returnVoxelEntry(entry)
+			end
+		end)
+	end
+end
 
 function VoxelDestructionService:_regenSession(session)
 	local part = session.OriginalPart
@@ -1127,41 +1207,7 @@ function VoxelDestructionService:_regenSession(session)
 		end
 	end
 
-	if #session.DynamicIds > 0 then
-		local dynamicCleanupIds = {}
-		local delayedReturns = {}
-
-		for _, id in session.DynamicIds do
-			local entry = self:_extractActiveVoxel(id)
-			if not entry then
-				continue
-			end
-
-			local partRef = entry.Part
-			partRef.Anchored = true
-			partRef.CanCollide = false
-			partRef.CanQuery = false
-			partRef.CanTouch = false
-			partRef.AssemblyLinearVelocity = Vector3.zero
-			partRef.AssemblyAngularVelocity = Vector3.zero
-
-			table.insert(delayedReturns, entry)
-			table.insert(dynamicCleanupIds, id)
-			self:_queueFreeVoxelId(id, DEBRIS_FADE_DURATION + ID_REUSE_DELAY)
-		end
-
-		if #dynamicCleanupIds > 0 then
-			self:_fireSync(dynamicCleanupIds, nil)
-		end
-
-		if #delayedReturns > 0 then
-			task.delay(DEBRIS_FADE_DURATION, function()
-				for _, entry in delayedReturns do
-					self:_returnVoxelEntry(entry)
-				end
-			end)
-		end
-	end
+	self:_clearSessionDebris(session)
 
 	managed.sessions[session.Key] = nil
 
