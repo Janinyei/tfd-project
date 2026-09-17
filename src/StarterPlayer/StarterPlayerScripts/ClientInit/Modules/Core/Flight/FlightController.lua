@@ -370,12 +370,28 @@ function FlightController:_update(dt: number)
 		else Enum.MouseBehavior.Default
 
 	--[[
-		Body faces travel, eased. When stationary it holds its last facing rather
-		than snapping to a default, because a craft that whips around on stop
-		looks broken. Purely visual: it never feeds back into movement.
+		BODY FACING — shift-lock while moving, free look while still.
+
+		Moving in cruise: face the camera's YAW only, like shift lock. Not the
+		travel direction: strafing with A/D would otherwise swing the body
+		sideways while the camera kept looking forward, which reads as the
+		character walking sideways rather than strafing.
+
+		Boosting: face the full aim including pitch, since travel IS the look
+		vector and the nose should point down/up into the dive or climb.
+
+		Stationary: do not touch it at all. The camera keeps turning and the body
+		stays where it was — free look. Also avoids the craft whipping around to
+		a default facing the instant you stop.
+
+		Purely visual either way: body facing never feeds back into movement.
 	]]
-	if velocity.Magnitude > 1e-3 then
-		local target = CFrame.lookAt(Vector3.zero, velocity.Unit).Rotation
+	local moving = velocity.Magnitude > 1e-3
+	if moving then
+		local target = if boosting
+			then aimOrientation
+			else CFrame.fromEulerAnglesYXZ(0, yaw, 0)
+
 		bodyOrientation = bodyOrientation
 			:Lerp(target, ease(Config.Flight.BodyTurnResponse, dt))
 			:Orthonormalize()
