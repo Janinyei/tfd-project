@@ -178,11 +178,35 @@ FlightConfig.Destruction = {
 		  3. server independently checks the player's own replicated root
 		     velocity, so a client cannot just lie about its speed.
 	]]
-	MinCarveSpeed = 130,
+	MinCarveSpeed = 100,
 	-- Fraction of MinCarveSpeed the server requires from its OWN measurement of
 	-- the player's velocity. Below 1 to tolerate replication lag and the speed
 	-- already bled off by the impact before the packet lands.
-	ServerSpeedTolerance = 0.6,
+	ServerSpeedTolerance = 0.3,
+	--[[
+		Seconds of history the server keeps for that measurement. It validates
+		against the PEAK speed in this window, not the instantaneous value:
+		hitting a wall zeroes the instantaneous speed, which would otherwise make
+		the server refuse the carve that opens the wall and leave the player
+		embedded in it.
+	]]
+	ServerSpeedWindow = 0.75,
+
+	--[[
+		Distance the probe's cast origin is pulled BACK along travel. A spherecast
+		that starts inside geometry reports nothing, so once the craft is partly
+		embedded the probe would go blind exactly when it must fire. Must exceed
+		how far the hull can sink into a wall in one frame.
+	]]
+	ProbeBackoff = 8,
+
+	--[[
+		Escape hatch for the position dedupe. Pressed against a wall the craft
+		stops, the contact point stops moving, and a pure position check would
+		suppress every further carve — a deadlock. After this long with no carve,
+		carve again regardless of how little the contact point moved.
+	]]
+	StallCarveInterval = 0.3,
 
 	--[[
 		PREDICTIVE PROBE. Server destruction is not instant: the request has to
@@ -193,11 +217,11 @@ FlightConfig.Destruction = {
 		is what actually "makes up for lag" — it scales with the real measured
 		round trip instead of a guess.
 	]]
-	ProbeRadius = 5,
+	ProbeRadius = 3,
 	LeadFactor = 10,
 	-- Multiplier on measured round-trip time. GetNetworkPing() reports one-way
 	-- seconds, so 2.0 covers the full round trip.
-	PingLeadFactor = 2.0,
+	PingLeadFactor = 6.0,
 	MinLeadDistance = 6,
 	-- Cap: without it, a 700 stud/s boost on a bad connection would probe far
 	-- enough ahead to carve buildings you never actually reach.
@@ -214,7 +238,7 @@ FlightConfig.Destruction = {
 	-- Carve radius as a function of impact speed.
 	CarveRadiusBase = 6,
 	CarveRadiusPerSpeed = 0.035, -- + this * speed
-	CarveRadiusMax = 22,
+	CarveRadiusMax = 50,
 
 	-- Voxel granularity. Raised with speed: a big fast hole must not blow the
 	-- MAX_SUBDIVISIONS (2000) / SIM_PART_CAPACITY (4000) budget in

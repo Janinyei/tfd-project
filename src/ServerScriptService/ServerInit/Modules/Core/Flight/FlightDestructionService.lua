@@ -31,6 +31,13 @@ local Stats
 -- player -> os.clock() of last accepted carve
 local lastCarve: { [Player]: number } = {}
 
+--[[
+	player -> { Speed, Clock }: highest server-measured speed seen inside the
+	current window. Lets a carve be validated by how fast the player was a moment
+	ago, which is what makes wall contact survivable (see _onRequestCarve).
+]]
+local peakSpeed: { [Player]: { Speed: number, Clock: number } } = {}
+
 local function getRoot(player: Player): BasePart?
 	local character = player.Character
 	if not character then
@@ -75,12 +82,26 @@ function FlightDestructionService:_onRequestCarve(
 		return
 	end
 
-	-- Independent check against the server's OWN view of the player's velocity,
-	-- so the reported number cannot simply be fabricated. Tolerance is below 1
-	-- because replication lags and the impact has usually already bled speed off
-	-- by the time this packet lands.
+	--[[
+		Independent check against the server's OWN view of the player's velocity,
+		so the reported number cannot simply be fabricated.
+
+		Compared against the player's PEAK speed over a short window, not the
+		instantaneous value. The instantaneous check deadlocked: flying into a
+		wall stops the craft, measured speed collapses toward zero, and the server
+		then refuses the very carve that would open the wall — so the player sits
+		embedded in intact geometry forever.
+
+		The window still bounds cheating to "was legitimately fast very recently".
+	]]
 	local measured = root.AssemblyLinearVelocity.Magnitude
-	if measured < destruction.MinCarveSpeed * destruction.ServerSpeedTolerance then
+	local peak = peakSpeed[player]
+	if not peak or now - peak.Clock > destruction.ServerSpeedWindow or measured > peak.Speed then
+		peak = { Speed = measured, Clock = now }
+		peakSpeed[player] = peak
+	end
+
+	if math.max(measured, peak.Speed) < destruction.MinCarveSpeed * destruction.ServerSpeedTolerance then
 		return
 	end
 
@@ -134,6 +155,7 @@ function FlightDestructionService:Start()
 
 	Players.PlayerRemoving:Connect(function(player)
 		lastCarve[player] = nil
+		peakSpeed[player] = nil
 	end)
 end
 

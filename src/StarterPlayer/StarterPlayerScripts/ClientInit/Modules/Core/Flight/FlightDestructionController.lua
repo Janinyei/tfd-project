@@ -145,10 +145,19 @@ function FlightDestructionController:_update(dt: number)
 	-- Voxel shells replace the original part with sim parts that live in a
 	-- non-replicating folder on the server, so the client's probe only ever sees
 	-- the map containers — no double-hitting our own debris.
+	--[[
+		Origin is pulled BACK along travel before casting. Once the craft is
+		partly inside a wall, a spherecast starting inside that geometry reports
+		nothing, so the probe went blind exactly when it was needed most — that
+		is how you end up embedded in a wall that never breaks. Starting behind
+		the hull guarantees the surface is ahead of the cast.
+	]]
+	local castOrigin = root.Position - direction * destruction.ProbeBackoff
+
 	local result = workspace:Spherecast(
-		root.Position,
+		castOrigin,
 		destruction.ProbeRadius,
-		direction * leadDistance,
+		direction * (leadDistance + destruction.ProbeBackoff),
 		castParams
 	)
 
@@ -166,9 +175,18 @@ function FlightDestructionController:_update(dt: number)
 
 	local radius = Config.GetCarveRadius(speed)
 
-	-- Don't re-request a hole we just punched: consecutive frames inside the same
-	-- wall would otherwise spam identical carves.
-	if lastCarvePosition and (result.Position - lastCarvePosition).Magnitude < radius * 0.5 then
+	--[[
+		Don't re-request a hole we just punched — but only for a short window.
+
+		A pure position-based dedupe deadlocks: pressed against a wall the craft
+		stops, so the hit position stops changing, so the carve is suppressed
+		forever and the wall never opens. StallCarveInterval is the escape hatch:
+		if nothing has been carved for that long, carve again regardless of how
+		little the contact point moved.
+	]]
+	local sameSpot = lastCarvePosition
+		and (result.Position - lastCarvePosition).Magnitude < radius * 0.5
+	if sameSpot and (now - lastCarveTime) < destruction.StallCarveInterval then
 		return
 	end
 
