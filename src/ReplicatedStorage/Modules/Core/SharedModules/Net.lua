@@ -36,9 +36,19 @@ Net.RequestCarve = Packet(
 	Packet.NumberF32
 )
 
--- Server -> Client: nothing yet. Voxel create/cleanup/physics replication is
--- handled by VoxelDestructionService's own buffer RemoteEvents (a voxel payload
--- can exceed Packet's 65535-byte per-field cap), so a carve needs no echo.
+--[[
+	Server -> Client: result of that player's carve request.
+
+	Payload: voxels actually knocked loose (0 = the request was rejected, or it
+	landed somewhere already hollow). Without this the client cannot tell
+	"server refused" from "server carved but the hole did not open", which are
+	very different bugs with the same symptom.
+
+	Voxel geometry itself is NOT sent here — VoxelDestructionService owns that on
+	its own buffer remotes, because a voxel payload can exceed Packet's
+	65535-byte per-field cap.
+]]
+Net.CarveResult = Packet("CarveResult", Packet.NumberU16)
 
 function Net:Init(_core) end
 function Net:Start() end

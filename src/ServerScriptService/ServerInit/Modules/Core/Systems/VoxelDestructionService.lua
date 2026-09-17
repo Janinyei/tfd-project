@@ -72,6 +72,16 @@ local FROZEN_EVICTION_THRESHOLD = 0.85
 local MAX_SUBDIVISIONS = 2000
 
 --[[
+	Ratio of a cube's bounding-sphere radius to its edge length: sqrt(3)/2.
+	This is exactly what the fully-inside test costs at a sphere's boundary.
+]]
+local PIECE_BOUNDING_FACTOR = math.sqrt(3) * 0.5
+
+-- Voxels are never allowed to exceed the carve radius divided by this, so a
+-- carve always has room to contain whole pieces.
+local MIN_VOXEL_RADIUS_RATIO = 2.5
+
+--[[
 	Draw every destruction volume. Flip to true and EVERY DestroyBox/DestroyArea call
 	renders its own region — no per-call opt-in, no manual calls.
 
@@ -1042,6 +1052,26 @@ function VoxelDestructionService:_destroyVolume(
 		resetTime = nil
 	end
 
+	--[[
+		BOUNDARY COMPENSATION.
+
+		A piece is destroyed only if it is FULLY inside the volume, and that test
+		uses the piece's bounding sphere (size.Magnitude * 0.5 = 0.87 * voxel).
+		So the usable hole is always ~0.87 voxels narrower than the requested
+		radius on every side — with 5-stud voxels that is over 4 studs lost, which
+		is enough to hollow a wall's interior while leaving its surface skin
+		intact and impassable.
+
+		Expanding the sphere by that margin makes the region actually removed
+		match the radius the caller asked for. Spheres only: the box test is an
+		exact 8-corner check and loses nothing.
+	]]
+	if volumeSpec.Shape ~= "Box" then
+		-- Guard against a degenerate request where voxels are large relative to
+		-- the hole: without it, compensation could balloon a tiny carve.
+		minVoxelSize = math.min(minVoxelSize, volumeSpec.Radius / MIN_VOXEL_RADIUS_RATIO)
+		volumeSpec.Radius += minVoxelSize * PIECE_BOUNDING_FACTOR
+	end
 
 	local launchDir = safeUnit(direction)
 	local launchForce = force or DEFAULT_DEBRIS_FORCE

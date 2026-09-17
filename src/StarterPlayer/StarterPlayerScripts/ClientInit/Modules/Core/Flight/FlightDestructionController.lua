@@ -57,6 +57,11 @@ local probeDebug = {
 	CarveRadius = 0,
 	CarveClock = 0,
 	CarveCount = 0,
+	-- Server-confirmed results, for telling apart the two failure modes:
+	-- rejected outright vs carved-but-nothing-removed.
+	LastDestroyed = 0,
+	TotalDestroyed = 0,
+	RejectedCount = 0,
 }
 
 local function resolveContainers(names: { string }): { Instance }
@@ -242,6 +247,14 @@ function FlightDestructionController:Start()
 	self._trove:Connect(workspace.ChildRemoved, function()
 		self:_refreshCastParams()
 	end)
+
+	self._trove:Add(Net.CarveResult.OnClientEvent:Connect(function(destroyed)
+		probeDebug.LastDestroyed = destroyed
+		probeDebug.TotalDestroyed += destroyed
+		if destroyed == 0 then
+			probeDebug.RejectedCount += 1
+		end
+	end))
 
 	self._trove:Connect(RunService.PostSimulation, function(dt)
 		self:_update(dt)

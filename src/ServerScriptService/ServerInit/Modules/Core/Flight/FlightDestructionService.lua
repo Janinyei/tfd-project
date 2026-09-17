@@ -134,9 +134,14 @@ function FlightDestructionService:_onRequestCarve(
 		ResetTime = destruction.ResetTime,
 	})
 
-	if destroyed and destroyed > 0 then
+	destroyed = destroyed or 0
+	if destroyed > 0 then
 		Stats:AddVoxelsDestroyed(player, destroyed)
 	end
+
+	-- Echo the real count back so the client can distinguish "rejected" from
+	-- "carved but the hole did not open".
+	Net.CarveResult:FireClient(player, math.min(destroyed, 65535))
 end
 
 function FlightDestructionService:Init(core)

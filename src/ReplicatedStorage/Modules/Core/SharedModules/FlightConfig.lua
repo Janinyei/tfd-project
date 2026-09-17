@@ -240,11 +240,12 @@ FlightConfig.Destruction = {
 
 	--[[
 		Push the carve centre INTO the surface along travel, as a fraction of the
-		carve radius. A sphere centred exactly on the contact point only removes
-		the near half of the wall, so a thick wall still blocks you; biasing
-		inward means the hole is already deep enough when you arrive.
+		carve radius. Keep this SMALL: the sphere already reaches inward by its own
+		radius, so biasing deep moves the removable region past the surface and
+		leaves an intact skin over a hollow interior — a wall you cannot burst
+		through. 0 centres it exactly on the contact point.
 	]]
-	CarveDepthBias = 0.6,
+	CarveDepthBias = 0.15,
 
 	-- Carve radius as a function of impact speed.
 	CarveRadiusBase = 6,
@@ -256,9 +257,9 @@ FlightConfig.Destruction = {
 	-- VoxelDestructionService.
 	MinVoxelSizeBase = 3,
 	MinVoxelSizePerSpeed = 0.012,
-	MinVoxelSizeMax = 9,
+	MinVoxelSizeMax = 5,
 
-	DebrisForceBase = 40,
+	DebrisForceBase = 500,
 	DebrisForcePerSpeed = 0.35,
 	DebrisForceMax = 5000,
 
@@ -291,7 +292,7 @@ FlightConfig.Destruction = {
 	MinRequestVoxelSize = 15,
 	-- Server-side rate limit per player, slightly looser than the client's to
 	-- tolerate jitter.
-	ServerMinCarveInterval = 0.05,
+	ServerMinCarveInterval = 0.01,
 }
 
 -- Names of Workspace folders whose descendants are destructible.
