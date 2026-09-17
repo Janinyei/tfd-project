@@ -24,7 +24,10 @@ FlightConfig.Flight = {
 	ThrottleAccel = 180, -- studs/s^2 while holding throttle up
 	ThrottleDecel = 220, -- studs/s^2 while holding throttle down
 	BrakeDecel = 500, -- studs/s^2 while air-braking
-	Drag = 0.35, -- passive loss: drag * speed  (studs/s per second)
+	-- No passive drag: throttle is a setpoint, so releasing W holds your speed.
+	-- This only bleeds boost OVERSPEED back down to MaxSpeed after Shift is
+	-- released, as an exponential rate (higher = snappier decay).
+	OverspeedBleed = 1.1,
 
 	BoostAccelMultiplier = 2.2,
 
@@ -196,7 +199,7 @@ FlightConfig.Destruction = {
 
 	DebrisForceBase = 40,
 	DebrisForcePerSpeed = 0.35,
-	DebrisForceMax = 260,
+	DebrisForceMax = 5000,
 
 	--[[
 		0 == PERMANENT. Carved geometry never regenerates; the hole and the shell
@@ -225,7 +228,7 @@ FlightConfig.Destruction = {
 	-- Hard clamp on the radius a client may ask for.
 	MaxRequestRadius = 24,
 	-- Hard floor on voxel size a client may ask for (small = expensive).
-	MinRequestVoxelSize = 2,
+	MinRequestVoxelSize = 15,
 	-- Server-side rate limit per player, slightly looser than the client's to
 	-- tolerate jitter.
 	ServerMinCarveInterval = 0.05,

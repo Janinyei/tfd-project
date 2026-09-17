@@ -319,12 +319,25 @@ function FlightController:_integrateThrust(dt: number)
 		end
 	end
 
-	-- Passive drag, proportional to speed — signed, so it decays reverse too.
-	forwardSpeed -= forwardSpeed * flight.Drag * dt
+	--[[
+		No blanket drag. Throttle is a SETPOINT: release W and you keep cruising.
+		A general drag term did nothing while the throttle was held (equilibrium
+		sat above MaxSpeed anyway) and merely forced you to hold W forever, which
+		S and Ctrl already cover deliberately.
+
+		Drag survives only where it has an actual job: bleeding off boost
+		overspeed. The clamp ceiling is always BoostMaxSpeed, and anything above
+		the currently-allowed max decays toward it. Clamping straight to MaxSpeed
+		instead would teleport speed 700 -> 400 the frame Shift is released.
+	]]
+	if forwardSpeed > maxSpeed then
+		local excess = forwardSpeed - maxSpeed
+		forwardSpeed = maxSpeed + excess * math.exp(-flight.OverspeedBleed * dt)
+	end
 
 	-- S past zero reverses. Reverse has its own, much lower ceiling and is never
 	-- boosted: backing up at 700 studs/s is not a control scheme.
-	forwardSpeed = math.clamp(forwardSpeed, -flight.ReverseMaxSpeed, maxSpeed)
+	forwardSpeed = math.clamp(forwardSpeed, -flight.ReverseMaxSpeed, flight.BoostMaxSpeed)
 
 	-- Q climbs, E descends. Independent of throttle so you can hover-climb.
 	hoverSpeed = approachThrust(
