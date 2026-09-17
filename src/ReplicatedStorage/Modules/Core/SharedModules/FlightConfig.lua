@@ -89,9 +89,20 @@ FlightConfig.Camera = {
 	-- Chase offset in craft-local space (behind + above).
 	Distance = 18,
 	Height = 4,
-	DistanceSpeedScale = 0.03, -- extra studs of pullback per stud/s of speed
+	-- Extra studs of pullback per stud/s of speed. Applied ONLY while boosting,
+	-- so the stretch reads as speed rather than becoming the default framing.
+	DistanceSpeedScale = 0.03,
 	MaxDistance = 44,
 	DistanceResponse = 3,
+
+	--[[
+		Dragging follow: how fast the camera's focus point chases the character.
+		Lower = more trail/lag, the camera visibly drags behind while cruising.
+		Boost is deliberately much stiffer — at 700 studs/s a lagging focus lets
+		the craft slide to the edge of frame or out of it.
+	]]
+	FollowResponse = 7,
+	BoostFollowResponse = 28,
 
 	FocusForward = 2, -- look-ahead offset applied to the focus point
 

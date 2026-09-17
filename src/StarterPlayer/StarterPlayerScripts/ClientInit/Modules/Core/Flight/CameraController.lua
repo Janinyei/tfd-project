@@ -37,6 +37,11 @@ local currentFov = 0
 -- Smoothed camera rotation, so the camera lags the craft slightly instead of
 -- being welded to it.
 local smoothedRotation = CFrame.identity
+--[[
+	The point the camera frames. Chases the character rather than being pinned to
+	it, which is what produces the dragging/trailing feel while cruising.
+]]
+local smoothedFocus = Vector3.zero
 local initialized = false
 
 -- Shake is accumulated by CameraShaker on its own render step (Camera + 1) and
@@ -106,6 +111,7 @@ function CameraController:_update(dt: number)
 	if not initialized then
 		initialized = true
 		smoothedRotation = targetRotation
+		smoothedFocus = root.Position
 		currentDistance = cam.Distance
 		currentFov = cam.BaseFov
 	end
@@ -115,10 +121,19 @@ function CameraController:_update(dt: number)
 		:Orthonormalize()
 
 	local speed = Flight:GetSpeed()
+	local boosting = Flight:IsBoosting()
 	self:_updateRumble(Flight:GetVelocity().Magnitude)
 
-	-- Chase distance grows with speed, eased.
-	local targetDistance = math.min(cam.Distance + speed * cam.DistanceSpeedScale, cam.MaxDistance)
+	--[[
+		Chase distance only stretches while BOOSTING. Cruise speed is a fixed
+		set-speed, so scaling distance with it just parked the camera at a
+		constant wider distance and wasted the effect; reserving it for boost
+		makes the pull-back read as "this is fast" instead of being the default
+		framing.
+	]]
+	local targetDistance = if boosting
+		then math.min(cam.Distance + speed * cam.DistanceSpeedScale, cam.MaxDistance)
+		else cam.Distance
 	currentDistance += (targetDistance - currentDistance) * ease(cam.DistanceResponse, dt)
 
 	-- FOV opens with speed for a sense of velocity.
@@ -127,8 +142,19 @@ function CameraController:_update(dt: number)
 	currentFov += (targetFov - currentFov) * ease(cam.FovResponse, dt)
 	camera.FieldOfView = currentFov
 
+	--[[
+		DRAGGING FOLLOW. The focus point eases toward the character instead of
+		being locked to it, so the camera trails during cruise and catches up when
+		you settle — the craft leads, the camera follows.
+
+		Boost uses a much stiffer response: at 700 studs/s a lagging focus would
+		leave the craft drifting toward the edge of frame, or off it entirely.
+	]]
+	local followResponse = if boosting then cam.BoostFollowResponse else cam.FollowResponse
+	smoothedFocus = smoothedFocus:Lerp(root.Position, ease(followResponse, dt))
+
 	-- Focus slightly ahead of the craft so the crosshair area stays centered.
-	local focus = root.Position + smoothedRotation.LookVector * cam.FocusForward
+	local focus = smoothedFocus + smoothedRotation.LookVector * cam.FocusForward
 
 	local offset = smoothedRotation:VectorToWorldSpace(Vector3.new(0, cam.Height, currentDistance))
 
