@@ -658,11 +658,20 @@ function VoxelDestructionService:_tickPhysics()
 	local now = os.clock()
 
 	--[[
-		No anti-sleep poking. The previous implementation nudged every chunk's
-		angular velocity every tick specifically to stop Roblox putting it to
-		sleep, which kept thousands of resting chunks permanently in the solver at
-		up to 240Hz AND permanently in the snapshot stream. Resting debris is
-		exactly what we want the engine to stop simulating.
+		Live chunks MUST be poked every tick.
+
+		Sim parts live under workspace.Camera (which is what keeps the server from
+		rendering them — the server simulates, clients render). Parts parented
+		there behave oddly with the physics engine: it auto-sleeps them and they
+		then refuse to simulate properly. The alternating nudge is what keeps
+		them awake; without it debris simply stops moving. Alternating sign so the
+		nudge cannot integrate into a drift.
+
+		This is exactly why explicit freezing is needed: engine sleep is not
+		usable here, so resting chunks would otherwise be poked awake forever.
+		Anchoring a settled chunk is our substitute for the sleep we cannot get —
+		and it is strictly better, since an anchored part leaves the solver
+		entirely rather than idling in it.
 	]]
 	for id, entry in activeDynamicVoxels do
 		local part = entry.Part
@@ -689,6 +698,11 @@ function VoxelDestructionService:_tickPhysics()
 			table.insert(freezeIds, id)
 		else
 			liveCount += 1
+			-- Keep it awake (see above). Only live chunks are poked; frozen ones
+			-- are anchored and must stay asleep.
+			local poke = (id % 2 == 0) and 0.001 or -0.001
+			part.AssemblyAngularVelocity = part.AssemblyAngularVelocity
+				+ Vector3.new(poke, 0, 0)
 		end
 	end
 
