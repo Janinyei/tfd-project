@@ -6,13 +6,15 @@
 	  Players     — every BasePart of every character
 	  VoxelShell  — anchored voxels standing in for the intact remainder of a
 	                damaged part. SOLID to players.
-	  VoxelDebris — unanchored launched rubble. NOT solid to players.
+	  VoxelDebris — unanchored launched rubble. ALSO solid to players: any
+	                non-collidable voxel group is a noclip hole, since the
+	                original part stops colliding on first hit.
 
 	The shell/debris split matters because VoxelDestructionService makes the
 	original part non-collidable on first hit and hands collision to the shell.
 	A single "Voxels" group that players ignored therefore turned every damaged
 	wall into a ghost — you would punch one hole and then fly through the whole
-	structure. Shell keeps walls solid; only rubble is pass-through.
+	structure. Every voxel therefore collides.
 
 	Both voxel groups collide with Default and each other, so debris piles and
 	settles against the map normally.
@@ -53,13 +55,11 @@ function CollisionGroupManager:_setupGroups()
 	PhysicsService:CollisionGroupSetCollidable(GROUP_PLAYERS, GROUP_DEFAULT, true)
 	PhysicsService:CollisionGroupSetCollidable(GROUP_PLAYERS, GROUP_PLAYERS, true)
 
-	-- Shell IS solid to players. The original part goes non-collidable on first
-	-- hit and the shell takes over collision, so making this false turns every
-	-- damaged wall into a ghost you fly straight through.
+	-- EVERY voxel is solid to players, shell and debris alike. The original part
+	-- goes non-collidable on first hit and voxels take over collision, so any
+	-- non-collidable voxel group is a hole you can noclip through.
 	PhysicsService:CollisionGroupSetCollidable(GROUP_PLAYERS, GROUP_VOXEL_SHELL, true)
-
-	-- Debris is not. Flying chunks should never body-block or shove the craft.
-	PhysicsService:CollisionGroupSetCollidable(GROUP_PLAYERS, GROUP_VOXEL_DEBRIS, false)
+	PhysicsService:CollisionGroupSetCollidable(GROUP_PLAYERS, GROUP_VOXEL_DEBRIS, true)
 
 	PhysicsService:CollisionGroupSetCollidable(GROUP_VOXEL_SHELL, GROUP_DEFAULT, true)
 	PhysicsService:CollisionGroupSetCollidable(GROUP_VOXEL_SHELL, GROUP_VOXEL_SHELL, true)

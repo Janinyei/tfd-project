@@ -31,7 +31,26 @@ local DEBRIS_RENDER_DISTANCE = 220
 
 local VOXEL_CAPACITY = 4000
 
-local VISUAL_COLLISION_GROUP = "Default"
+--[[
+	Collision groups registered server-side by CollisionGroupManager and
+	replicated to clients. Shell = intact remainder of a damaged part, Debris =
+	launched/settled rubble. Both collide with players.
+
+	Assignment is pcall-guarded: group registration replicates to the client
+	asynchronously, so a voxel created before the registry arrives would error on
+	assignment. Falling back to Default keeps it collidable either way.
+]]
+local SHELL_COLLISION_GROUP = "VoxelShell"
+local DEBRIS_COLLISION_GROUP = "VoxelDebris"
+
+local function setCollisionGroup(part: BasePart, group: string)
+	local ok = pcall(function()
+		part.CollisionGroup = group
+	end)
+	if not ok then
+		part.CollisionGroup = "Default"
+	end
+end
 
 --------------------------------------------------------------------------------
 -- BUFFER LAYOUT
@@ -122,7 +141,7 @@ function VoxelDestructionController:Init(core)
 	template.CastShadow = true
 	template.TopSurface = Enum.SurfaceType.Smooth
 	template.BottomSurface = Enum.SurfaceType.Smooth
-	template.CollisionGroup = VISUAL_COLLISION_GROUP
+	template.CollisionGroup = "Default"
 	template.Archivable = true
 
 	voxelCache = PartCache.new(template, VOXEL_CAPACITY, voxelContainer)
@@ -176,7 +195,7 @@ function VoxelDestructionController:_evictVoxel(id: number)
 	part.CanCollide = true
 	part.CanQuery = true
 	part.CastShadow = true
-	part.CollisionGroup = VISUAL_COLLISION_GROUP
+	setCollisionGroup(part, SHELL_COLLISION_GROUP)
 
 	voxelCache:ReturnPart(part)
 end
@@ -293,7 +312,7 @@ function VoxelDestructionController:_onCreateBuffer(buf: buffer)
 			part.CanQuery = true
 			part.CanTouch = false
 			part.CastShadow = false
-			part.CollisionGroup = VISUAL_COLLISION_GROUP
+			setCollisionGroup(part, DEBRIS_COLLISION_GROUP)
 
 			voxels[id] = {
 				Id = id,
@@ -323,7 +342,7 @@ function VoxelDestructionController:_onCreateBuffer(buf: buffer)
 			part.CanQuery = true
 			part.CanTouch = false
 			part.CastShadow = true
-			part.CollisionGroup = VISUAL_COLLISION_GROUP
+			setCollisionGroup(part, SHELL_COLLISION_GROUP)
 
 			voxels[id] = {
 				Id = id,
@@ -390,6 +409,9 @@ function VoxelDestructionController:_onPhysics(buf: buffer?)
 			dynamicVisuals[id] = nil
 			entry.Part.CFrame = target
 			entry.Part.Anchored = true
+			-- Settled wreckage is static geometry now, so it moves to the shell
+			-- group and stays solid.
+			setCollisionGroup(entry.Part, SHELL_COLLISION_GROUP)
 			entry.StartCFrame = target
 			entry.TargetCFrame = target
 			continue
