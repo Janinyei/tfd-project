@@ -205,7 +205,10 @@ function FlightController:StartFlight()
 
 	forwardSpeed = math.max(flight.BaseSpeed, root.AssemblyLinearVelocity.Magnitude)
 	strafeSpeed, hoverSpeed = 0, 0
-	velocity = Vector3.zero
+	-- Seeded from real motion, not zero: with inertia smoothing, starting at zero
+	-- would make entering flight ramp up from a standstill and eat any speed you
+	-- already had.
+	velocity = root.AssemblyLinearVelocity
 	mouseDeltaX, mouseDeltaY = 0, 0
 	mouseLocked = true
 
@@ -415,11 +418,28 @@ function FlightController:_update(dt: number)
 		then Enum.MouseBehavior.LockCenter
 		else Enum.MouseBehavior.Default
 
-	-- Hover thrust is world-vertical, not craft-relative: pitching the nose up
-	-- must not turn "climb" into "climb and drift backwards".
-	velocity = orientation.LookVector * forwardSpeed
+	--[[
+		Desired velocity from the thrust axes. Hover is world-vertical, not
+		craft-relative: pitching the nose up must not turn "climb" into "climb and
+		drift backwards".
+	]]
+	local targetVelocity = orientation.LookVector * forwardSpeed
 		+ orientation.RightVector * strafeSpeed
 		+ Vector3.yAxis * hoverSpeed
+
+	--[[
+		INERTIA. The actual velocity eases toward the target instead of being
+		snapped to it, which is what gives the craft mass:
+		  * releasing throttle or braking ramps down instead of stepping;
+		  * a hard turn carries momentum through the corner and drifts, rather
+		    than teleporting the whole velocity vector onto the new heading.
+
+		This is the thing passive drag was reaching for and could not provide —
+		drag only shrank the magnitude, it never decoupled velocity from facing.
+		Cruise still holds indefinitely because the TARGET holds; only the
+		approach to it is smoothed.
+	]]
+	velocity = velocity:Lerp(targetVelocity, ease(Config.Flight.VelocityResponse, dt))
 
 	-- Constraint strengths are re-pushed every frame, not just at rig build, so
 	-- the debug panel's sliders take effect without re-toggling flight. Three

@@ -29,6 +29,17 @@ FlightConfig.Flight = {
 	-- released, as an exponential rate (higher = snappier decay).
 	OverspeedBleed = 1.1,
 
+	--[[
+		Inertia: how fast real velocity chases the velocity the thrust axes ask
+		for, as an exponential rate (1 - exp(-k*dt)).
+		  high (20+) = weightless, velocity snaps onto the nose instantly
+		  ~6         = noticeable mass, drifts through hard turns
+		  low (2-3)  = heavy, floaty, wide arcs
+		This is what produces deceleration feel. It does NOT bleed cruise speed:
+		the target holds, so only the approach is smoothed.
+	]]
+	VelocityResponse = 6,
+
 	BoostAccelMultiplier = 2.2,
 
 	-- Vertical hover thrust (Q up / E down). Independent of forward throttle, so
