@@ -187,6 +187,7 @@ function DebugController:_render()
 	self.GizmosEnabled = gizmoState:get()
 
 	Iris.SeparatorText({ "Flight" })
+	line("State", Flight:GetState())
 	line("Flying", Flight:IsFlying())
 	line("Mouse captured [8]", Flight:IsMouseLocked())
 	line("Boosting [Shift]", Flight:IsBoosting())

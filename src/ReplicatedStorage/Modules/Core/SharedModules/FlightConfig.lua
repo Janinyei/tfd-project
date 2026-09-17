@@ -67,6 +67,24 @@ FlightConfig.Flight = {
 	MouseUnlockKey = Enum.KeyCode.Eight,
 }
 
+--[[
+	Head look. The head turns toward the camera aim while CRUISING or STATIONARY
+	only — during a boost the whole body already points down the look vector, so
+	adding neck rotation on top just over-rotates the head.
+
+	Ported from dodgeball-game's MovementController tilt, with the R6-specific
+	neck-frame correction kept behind a rig check.
+]]
+FlightConfig.Head = {
+	PitchLimit = 40, -- degrees up/down
+	YawLimit = 65, -- degrees left/right
+	-- Divides the aim components before asin: larger = subtler head turn.
+	LookDivisor = 1.2,
+	-- Exponential rate toward the target neck C0. Framerate-independent, unlike
+	-- the fixed per-frame 0.1 lerp in the dodgeball original.
+	Response = 12,
+}
+
 FlightConfig.Camera = {
 	-- Chase offset in craft-local space (behind + above).
 	Distance = 18,

@@ -44,6 +44,7 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
 local Trove = require(ReplicatedStorage.Modules.Utils.Trove)
+local StateMachine = require(ReplicatedStorage.Modules.Utils.StateMachine)
 
 local player = Players.LocalPlayer
 
@@ -52,6 +53,23 @@ local FlightController = {}
 local Core
 local Config
 local Camera
+
+--[[
+	Flight states. StateMachine does no validation and declares no transitions —
+	it is a current-string plus a StateChanged signal — so the authoritative
+	mapping lives in _resolveState below and these names are the whole contract.
+
+	Grounded   = not flying
+	Stationary = flying, no movement input (free look, head look active)
+	Cruising   = flying, WASD/QE input, shift-locked body, head look active
+	Boosting   = flying, Shift held, body follows full aim, head look suppressed
+]]
+FlightController.States = {
+	Grounded = "Grounded",
+	Stationary = "Stationary",
+	Cruising = "Cruising",
+	Boosting = "Boosting",
+}
 
 -- Live state
 local flying = false
@@ -205,6 +223,7 @@ function FlightController:StartFlight()
 
 	humanoid.PlatformStand = true
 	flying = true
+	self.State:SetState(FlightController.States.Stationary)
 end
 
 function FlightController:StopFlight()
@@ -212,6 +231,7 @@ function FlightController:StopFlight()
 		return
 	end
 	flying = false
+	self.State:SetState(FlightController.States.Grounded)
 	self:_teardownRig()
 
 	-- _update no longer runs, so nothing would restore these: the cursor would
@@ -387,6 +407,17 @@ function FlightController:_update(dt: number)
 		Purely visual either way: body facing never feeds back into movement.
 	]]
 	local moving = velocity.Magnitude > 1e-3
+
+	-- Single place that decides the state. SetState is a no-op when unchanged, so
+	-- calling it every frame costs nothing and StateChanged only fires on real
+	-- transitions.
+	self.State:SetState(
+		if boosting
+			then FlightController.States.Boosting
+			elseif moving then FlightController.States.Cruising
+			else FlightController.States.Stationary
+	)
+
 	if moving then
 		local target = if boosting
 			then aimOrientation
@@ -431,6 +462,14 @@ end
 
 function FlightController:GetSpeed(): number
 	return velocity.Magnitude
+end
+
+function FlightController:GetState(): string
+	return self.State:GetState()
+end
+
+function FlightController:IsState(state: string): boolean
+	return self.State:IsState(state)
 end
 
 function FlightController:IsBoosting(): boolean
@@ -484,6 +523,9 @@ end
 function FlightController:Init(core)
 	Core = core
 	self._trove = Trove.new()
+
+	self.State = self._trove:Add(StateMachine.new())
+	self.State:SetState(FlightController.States.Grounded)
 end
 
 function FlightController:Start()
