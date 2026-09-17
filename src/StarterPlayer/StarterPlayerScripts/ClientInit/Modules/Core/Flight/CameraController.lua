@@ -64,6 +64,14 @@ function CameraController:_updateRumble(travelSpeed: number)
 		return
 	end
 	local shake = Config.Shake
+
+	-- Master switch also silences the sustained rumble; the instance stays alive
+	-- at zero magnitude so re-enabling does not have to recreate it.
+	if not shake.Enabled then
+		rumble.Magnitude = 0
+		return
+	end
+
 	local span = math.max(shake.RumbleMaxSpeed - shake.RumbleMinSpeed, 1)
 	local alpha = math.clamp((travelSpeed - shake.RumbleMinSpeed) / span, 0, 1)
 	rumble.Magnitude = shake.RumbleMaxMagnitude * alpha
@@ -187,7 +195,7 @@ end
 	reaches the Inactive state and the instance is never collected.
 ]]
 function CameraController:Shake(magnitude: number, roughness: number, fadeIn: number, fadeOut: number)
-	if not self.Shaker then
+	if not self.Shaker or not Config.Shake.Enabled then
 		return
 	end
 	self.Shaker:ShakeOnce(magnitude, roughness, fadeIn, math.max(fadeOut, 0.01))

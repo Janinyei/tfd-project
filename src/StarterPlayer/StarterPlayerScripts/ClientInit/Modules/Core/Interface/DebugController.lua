@@ -186,6 +186,10 @@ function DebugController:_render()
 	Iris.Checkbox({ "Gizmos" }, { isChecked = gizmoState })
 	self.GizmosEnabled = gizmoState:get()
 
+	local shakeState = Iris.State(Config.Shake.Enabled)
+	Iris.Checkbox({ "Camera shake" }, { isChecked = shakeState })
+	Config.Shake.Enabled = shakeState:get()
+
 	Iris.SeparatorText({ "Flight" })
 	line("State", Flight:GetState())
 	line("Flying", Flight:IsFlying())

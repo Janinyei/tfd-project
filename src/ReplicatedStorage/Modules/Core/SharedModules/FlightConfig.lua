@@ -133,6 +133,14 @@ FlightConfig.Camera = {
 ]]
 FlightConfig.Shake = {
 	--[[
+		Master switch. OFF: temporarily disabled while tuning destruction, since
+		shake on every carve makes it hard to judge whether a hole actually
+		opened. Flip to true (or use the Shake checkbox in the debug panel) to
+		bring carve/impact/rumble back — nothing else has to change.
+	]]
+	Enabled = false,
+
+	--[[
 		Carving through geometry. Scales with BOTH the hole punched and the speed
 		it was punched at:
 			magnitude = CarveBase + radius * CarvePerRadius + speed * CarvePerSpeed
