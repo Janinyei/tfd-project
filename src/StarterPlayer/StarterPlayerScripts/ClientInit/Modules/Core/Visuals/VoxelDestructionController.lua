@@ -27,7 +27,7 @@ local NetworkKeys
 local PHYSICS_SNAPSHOT_INTERVAL = 1 / 20
 local DEBRIS_RENDER_DISTANCE = 220
 
-local VOXEL_CAPACITY = 4000
+local VOXEL_CAPACITY = 30000
 
 --[[
 	Collision groups, registered server-side by CollisionGroupManager and
@@ -210,6 +210,8 @@ function VoxelDestructionController:_evictVoxel(id: number)
 	part.Transparency = 0
 	part.Anchored = true
 	part.CanCollide = true
+	-- Restored for reuse: the pool hands parts out for shell as well as debris,
+	-- and debris leaves with CanQuery = false.
 	part.CanQuery = true
 	part.CastShadow = true
 	setCollisionGroup(part, SHELL_COLLISION_GROUP)
@@ -312,7 +314,14 @@ function VoxelDestructionController:_onCreateBuffer(buf: buffer)
 			-- Always true: rubble must collide with the map and other voxels so it
 			-- piles and settles. Passing through the PLAYER is the group's job.
 			part.CanCollide = true
-			part.CanQuery = true
+			--[[
+				NOT probe-able. The impact spherecast includes this whole folder so
+				it can see the static shell; debris sharing it meant loose chunks
+				flying ahead of the craft were hit FIRST, so the carve centred on
+				rubble in mid-air, destroyed nothing, and left the wall behind it
+				intact. Debris never blocks the player, so it never needs carving.
+			]]
+			part.CanQuery = false
 			part.CanTouch = false
 			part.CastShadow = false
 			setCollisionGroup(part, DEBRIS_COLLISION_GROUP)

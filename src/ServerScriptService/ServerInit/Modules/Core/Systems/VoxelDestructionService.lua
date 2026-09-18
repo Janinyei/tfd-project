@@ -106,7 +106,7 @@ local PHYSICS_SNAPSHOT_INTERVAL = 1 / PHYSICS_SNAPSHOT_RATE
 local DEBRIS_RECYCLE_DELAY = 0.1
 local ID_REUSE_DELAY = 1.25
 
-local SIM_PART_CAPACITY = 4000
+local SIM_PART_CAPACITY = 30000
 
 -- Seconds between debug census broadcasts.
 local CENSUS_INTERVAL = 0.5

@@ -40,6 +40,26 @@ local lastCarveTime = 0
 local lastCarvePosition: Vector3? = nil
 
 local castParams: RaycastParams
+local overlapParams: OverlapParams
+
+--[[
+	PREDICTIVE NOCLIP.
+
+	A carve is server-authoritative, so the client's geometry does not open until
+	the sync comes back — one full round trip during which the wall is still
+	solid locally and rams the craft to a stop. That is the wall-blocking hiccup.
+
+	Instead of voxelizing on the client (expensive, and then reconciling two
+	independent subdivisions), the client just drops COLLISION on whole parts
+	inside the sphere it asked the server to carve. No subdivision math, no
+	second source of truth: the server's real geometry replaces these parts when
+	it arrives, and collision is what actually blocks the player.
+
+	Each prediction is reverted if the server reports the carve destroyed nothing
+	(rejected / already hollow), and otherwise expires on a timer so a part can
+	never be left permanently pass-through by a dropped packet.
+]]
+local predictions: { { Part: BasePart, Clock: number } } = {}
 --[[
 	Last probe + carve, for the debug gizmos. Written every frame the probe runs
 	so DebugController can draw exactly what the detector saw, rather than
@@ -62,6 +82,7 @@ local probeDebug = {
 	LastDestroyed = 0,
 	TotalDestroyed = 0,
 	RejectedCount = 0,
+	PredictedParts = 0,
 }
 
 local function resolveContainers(names: { string }): { Instance }
@@ -98,6 +119,12 @@ function FlightDestructionController:_refreshCastParams()
 	castParams.FilterType = Enum.RaycastFilterType.Include
 	castParams.FilterDescendantsInstances = containers
 	castParams.RespectCanCollide = false
+
+	-- Same include set, reused for the predictive-noclip overlap query.
+	overlapParams = OverlapParams.new()
+	overlapParams.FilterType = Enum.RaycastFilterType.Include
+	overlapParams.FilterDescendantsInstances = containers
+	overlapParams.RespectCanCollide = false
 end
 
 function FlightDestructionController:_update(dt: number)
@@ -208,12 +235,60 @@ function FlightDestructionController:_update(dt: number)
 	probeDebug.CarveCount += 1
 
 	Net.RequestCarve:Fire(carvePosition, radius, direction, speed)
+	self:_predictNoclip(carvePosition, radius)
 
 	Camera:ShakeCarve(radius, speed)
 
 	-- No speed cost. Plowing through a building must not slow the craft: the
 	-- carve is the reward, and bleeding momentum on every wall made boosting
 	-- through a city feel like wading.
+end
+
+--[[
+	Drop collision on every part overlapping the requested carve sphere.
+
+	Queried with the same include list as the probe, so it only ever touches
+	destructible map geometry and static shell voxels — never debris (which is
+	non-probe-able and already passes through the player) and never the
+	character.
+]]
+function FlightDestructionController:_predictNoclip(position: Vector3, radius: number)
+	if not Config.Destruction.PredictiveNoclip then
+		return
+	end
+
+	overlapParams.FilterDescendantsInstances = castParams.FilterDescendantsInstances
+
+	local now = os.clock()
+	for _, part in workspace:GetPartBoundsInRadius(position, radius, overlapParams) do
+		if part:IsA("BasePart") and part.CanCollide then
+			part.CanCollide = false
+			table.insert(predictions, { Part = part, Clock = now })
+			probeDebug.PredictedParts += 1
+		end
+	end
+end
+
+--[[
+	Expire predictions. Only restores collision on parts the SERVER never took
+	over: if the carve landed, the server has already replicated the original
+	part as non-collidable, and re-enabling it here would make a carved wall
+	solid again on this client only.
+]]
+function FlightDestructionController:_expirePredictions(force: boolean)
+	local lifetime = Config.Destruction.PredictionLifetime
+	local now = os.clock()
+
+	for i = #predictions, 1, -1 do
+		local prediction = predictions[i]
+		if force or now - prediction.Clock >= lifetime then
+			local part = prediction.Part
+			if part.Parent then
+				part.CanCollide = true
+			end
+			table.remove(predictions, i)
+		end
+	end
 end
 
 -- Live snapshot for DebugController's gizmos and readouts.
@@ -253,11 +328,15 @@ function FlightDestructionController:Start()
 		probeDebug.TotalDestroyed += destroyed
 		if destroyed == 0 then
 			probeDebug.RejectedCount += 1
+			-- Nothing was carved, so the prediction was wrong: put the geometry
+			-- back before the player flies through an intact wall.
+			self:_expirePredictions(true)
 		end
 	end))
 
 	self._trove:Connect(RunService.PostSimulation, function(dt)
 		self:_update(dt)
+		self:_expirePredictions(false)
 	end)
 end
 

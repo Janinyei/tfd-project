@@ -225,7 +225,26 @@ FlightConfig.Destruction = {
 		suppress every further carve — a deadlock. After this long with no carve,
 		carve again regardless of how little the contact point moved.
 	]]
-	StallCarveInterval = 0.3,
+	StallCarveInterval = 0.05,
+
+	--[[
+		PREDICTIVE NOCLIP. On firing a carve request the client immediately drops
+		collision on parts inside the requested sphere, instead of waiting a full
+		round trip for the server's geometry. Without it the wall is still solid
+		locally while the request is in flight, which is what rams the craft to a
+		stop at high speed.
+
+		No client-side voxelization is involved: whole parts lose collision, and
+		the server's authoritative geometry replaces them when it arrives.
+	]]
+	PredictiveNoclip = true,
+	--[[
+		How long a prediction survives unconfirmed. Must comfortably exceed a bad
+		round trip, but stay short enough that a dropped packet cannot leave
+		geometry pass-through for long. Predictions are also reverted immediately
+		if the server reports the carve destroyed nothing.
+	]]
+	PredictionLifetime = 1.5,
 
 	--[[
 		PREDICTIVE PROBE. Server destruction is not instant: the request has to
@@ -244,7 +263,7 @@ FlightConfig.Destruction = {
 	MinLeadDistance = 6,
 	-- Cap: without it, a 700 stud/s boost on a bad connection would probe far
 	-- enough ahead to carve buildings you never actually reach.
-	MaxLeadDistance = 90,
+	MaxLeadDistance = 120,
 
 	--[[
 		Push the carve centre INTO the surface along travel, as a fraction of the
@@ -300,7 +319,7 @@ FlightConfig.Destruction = {
 	MinRequestVoxelSize = 10,
 	-- Server-side rate limit per player, slightly looser than the client's to
 	-- tolerate jitter.
-	ServerMinCarveInterval = 0.7,
+	ServerMinCarveInterval = 0.01,
 }
 
 -- Names of Workspace folders whose descendants are destructible.
