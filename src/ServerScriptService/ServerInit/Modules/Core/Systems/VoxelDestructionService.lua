@@ -61,7 +61,14 @@ local DEFAULT_DEBRIS_FORCE = 30
 local SETTLE_LINEAR_SPEED = 3.5
 local SETTLE_ANGULAR_SPEED = 3.5
 local SETTLE_TIME = 0.3
+-- Backstop for chunks that jitter or balance forever. Still requires ground
+-- support: on its own this would anchor a chunk in mid-flight.
 local FORCE_FREEZE_TIME = 8
+-- Absolute cap. An airborne chunk this old is never going to settle (knocked
+-- off the map, or oscillating), so it is recycled rather than frozen in the sky.
+local MAX_DEBRIS_AGE = 30
+-- Extra distance below a chunk that still counts as resting on something.
+local SUPPORT_MARGIN = 1.5
 
 --[[
 	The sim-part pool is finite (SIM_PART_CAPACITY) and wreckage never expires, so
@@ -584,6 +591,27 @@ end
 
 
 --[[
+	Is anything holding this chunk up?
+
+	A short downward ray from the chunk's centre, reaching just past its own
+	half-height. Hits map geometry, static shell and other debris — all valid
+	things to rest on. A carved-out original part is already CanQuery = false, so
+	a hollow wall cannot masquerade as support.
+
+	Only evaluated for chunks that are already candidates to freeze, so this runs
+	a handful of times per second, not per chunk per frame.
+]]
+local supportParams = RaycastParams.new()
+supportParams.FilterType = Enum.RaycastFilterType.Exclude
+supportParams.RespectCanCollide = false
+
+local function isSupported(part: BasePart): boolean
+	local reach = part.Size.Y * 0.5 + SUPPORT_MARGIN
+	local hit = workspace:Raycast(part.Position, Vector3.new(0, -reach, 0), supportParams)
+	return hit ~= nil and hit.Instance ~= part
+end
+
+--[[
 	Anchor a settled chunk: out of the solver, out of the snapshot stream, still
 	visible forever.
 
@@ -743,9 +771,35 @@ function VoxelDestructionService:_tickPhysics()
 			entry.RestClock = 0
 		end
 
+		local age = entry.SpawnClock and (now - entry.SpawnClock) or 0
 		local settled = (entry.RestClock or 0) >= SETTLE_TIME
-		-- Backstop for chunks that never stop jittering or stay balanced.
-		local expired = entry.SpawnClock and (now - entry.SpawnClock) >= FORCE_FREEZE_TIME
+		local expired = age >= FORCE_FREEZE_TIME
+
+		--[[
+			GROUND SUPPORT IS MANDATORY BEFORE FREEZING.
+
+			Freezing anchors a chunk exactly where it is, so freezing an airborne
+			one leaves it hanging in the sky. Slow-but-airborne is common: a chunk
+			near the apex of its arc, one scraping a wall, or one wedged against
+			another briefly reads as "at rest". The force-freeze backstop was
+			worse — it fired on age ALONE and would anchor a chunk mid-flight.
+
+			So both paths now require something underneath.
+		]]
+		if (settled or expired) and not isSupported(part) then
+			--[[
+				Airborne past the absolute cap is a chunk that will never settle:
+				knocked off the map, or stuck oscillating. Recycle it rather than
+				anchor it in the air or simulate it forever.
+			]]
+			if age >= MAX_DEBRIS_AGE then
+				table.insert(orphanIds, id)
+				continue
+			end
+
+			settled = false
+			expired = false
+		end
 
 		if settled or expired then
 			freezeIds = freezeIds or {}

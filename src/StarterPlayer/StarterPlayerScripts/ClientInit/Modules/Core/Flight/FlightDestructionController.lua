@@ -270,10 +270,18 @@ function FlightDestructionController:_predictNoclip(position: Vector3, radius: n
 end
 
 --[[
-	Expire predictions. Only restores collision on parts the SERVER never took
-	over: if the carve landed, the server has already replicated the original
-	part as non-collidable, and re-enabling it here would make a carved wall
-	solid again on this client only.
+	Expire predictions, restoring collision ONLY on parts the server never took
+	over.
+
+	This guard is the whole correctness of the system. When a carve lands, the
+	server makes the original part invisible + non-queryable and hands collision
+	to the voxel shell. Blindly re-enabling CanCollide here resurrected that part
+	on this client alone: a solid, invisible wall sitting exactly in the hole you
+	can see through.
+
+	Detection uses the marks the server itself applies when it takes a part over
+	(Transparency = 1, CanQuery = false). A part still opaque and queryable was
+	never carved, so restoring it is correct — that is the rejected-carve case.
 ]]
 function FlightDestructionController:_expirePredictions(force: boolean)
 	local lifetime = Config.Destruction.PredictionLifetime
@@ -283,9 +291,12 @@ function FlightDestructionController:_expirePredictions(force: boolean)
 		local prediction = predictions[i]
 		if force or now - prediction.Clock >= lifetime then
 			local part = prediction.Part
-			if part.Parent then
+			local serverTookOver = not part.CanQuery or part.Transparency >= 1
+
+			if part.Parent and not serverTookOver then
 				part.CanCollide = true
 			end
+
 			table.remove(predictions, i)
 		end
 	end
