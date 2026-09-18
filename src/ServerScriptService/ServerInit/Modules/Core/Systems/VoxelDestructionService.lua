@@ -806,7 +806,9 @@ function VoxelDestructionService:GetCensus(): (number, number, number)
 end
 
 function VoxelDestructionService:_tickPhysics()
-	local liveCount = 0
+	-- Ids to include in this tick's transform snapshot, collected as they are
+	-- classified so the encode pass cannot disagree with the buffer size.
+	local snapshotIds = {}
 	local orphanIds = {}
 	local freezeIds = nil
 	local frozenRecords = nil
@@ -878,7 +880,14 @@ function VoxelDestructionService:_tickPhysics()
 			freezeIds = freezeIds or {}
 			table.insert(freezeIds, id)
 		else
-			liveCount += 1
+			--[[
+				Recorded explicitly rather than counted. A count and a second pass
+				over activeDynamicVoxels can disagree — orphaned-but-still-parented
+				chunks (MAX_DEBRIS_AGE strays) are skipped here yet remain in the
+				table, so the second pass wrote more records than the buffer was
+				sized for: "buffer access out of bounds".
+			]]
+			table.insert(snapshotIds, id)
 			-- Keep it awake (see above). Only live chunks are poked; frozen ones
 			-- are anchored and must stay asleep.
 			local poke = (id % 2 == 0) and 0.001 or -0.001
@@ -907,12 +916,14 @@ function VoxelDestructionService:_tickPhysics()
 	end
 
 
-	if liveCount > 0 then
-		local buf = buffer.create(liveCount * PHYSICS_UPDATE_BYTES)
+	if #snapshotIds > 0 then
+		local buf = buffer.create(#snapshotIds * PHYSICS_UPDATE_BYTES)
 		local offset = 0
 
-		for id, entry in activeDynamicVoxels do
-			local part = entry.Part
+		for _, id in snapshotIds do
+			local entry = activeDynamicVoxels[id]
+			local part = entry and entry.Part
+			-- Freezing/eviction can have removed an id since it was listed.
 			if not part or not part.Parent then
 				continue
 			end
@@ -933,7 +944,15 @@ function VoxelDestructionService:_tickPhysics()
 			offset += PHYSICS_UPDATE_BYTES
 		end
 
-		_voxelPhysicsEvent:FireAllClients(buf)
+		-- Trim if any listed id dropped out, so the client never decodes padding.
+		if offset > 0 then
+			if offset < buffer.len(buf) then
+				local trimmed = buffer.create(offset)
+				buffer.copy(trimmed, 0, buf, 0, offset)
+				buf = trimmed
+			end
+			_voxelPhysicsEvent:FireAllClients(buf)
+		end
 	end
 
 	if #orphanIds > 0 then
