@@ -24,6 +24,7 @@ local RunService = game:GetService("RunService")
 local PartCache = require(ReplicatedStorage.Modules.Packages.PartCache)
 
 local Core
+local Net
 local _voxelSyncEvent: RemoteEvent
 local _voxelPhysicsEvent: RemoteEvent
 
@@ -107,6 +108,9 @@ local ID_REUSE_DELAY = 1.25
 
 local SIM_PART_CAPACITY = 4000
 
+-- Seconds between debug census broadcasts.
+local CENSUS_INTERVAL = 0.5
+
 local MAX_VOXEL_ID = 65535
 
 --[[
@@ -162,6 +166,7 @@ local simFolder
 
 local physicsConnection
 local physicsAccumulator = 0
+local censusAccumulator = 0
 
 --------------------------------------------------------------------------------
 -- TEMPLATE
@@ -429,6 +434,10 @@ end
 
 function VoxelDestructionService:Init(core)
 	Core = core
+	-- Only used for the debug census broadcast. Voxel geometry itself stays on
+	-- the dedicated buffer remotes below, since a payload can exceed Packet's
+	-- 65535-byte per-field cap.
+	Net = core:Get("Net")
 end
 
 function VoxelDestructionService:Start()
@@ -467,6 +476,14 @@ function VoxelDestructionService:Start()
 		end
 		physicsAccumulator -= PHYSICS_SNAPSHOT_INTERVAL
 		self:_tickPhysics()
+
+		-- Debug census, broadcast far slower than the physics snapshots.
+		censusAccumulator += PHYSICS_SNAPSHOT_INTERVAL
+		if censusAccumulator >= CENSUS_INTERVAL and Net then
+			censusAccumulator = 0
+			local shell, live, frozen = self:GetCensus()
+			Net.VoxelCensus:Fire(shell, live, frozen, SIM_PART_CAPACITY)
+		end
 	end)
 end
 
@@ -663,6 +680,28 @@ function VoxelDestructionService:_evictFrozenUnderPressure()
 	if evictedIds then
 		self:_fireSync(evictedIds, nil)
 	end
+end
+
+--[[
+	Live voxel census. Walks activeVoxels rather than maintaining counters,
+	because counters drift the moment any path forgets to decrement and a wrong
+	number is worse than no number. Bounded by SIM_PART_CAPACITY and only run at
+	CENSUS_INTERVAL, so the cost is irrelevant.
+]]
+function VoxelDestructionService:GetCensus(): (number, number, number)
+	local shell, live, frozen = 0, 0, 0
+
+	for _, entry in activeVoxels do
+		if entry.Frozen then
+			frozen += 1
+		elseif entry.Dynamic then
+			live += 1
+		else
+			shell += 1
+		end
+	end
+
+	return shell, live, frozen
 end
 
 function VoxelDestructionService:_tickPhysics()

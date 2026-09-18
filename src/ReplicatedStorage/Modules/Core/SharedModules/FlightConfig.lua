@@ -286,21 +286,21 @@ FlightConfig.Destruction = {
 	-- is meant to feel like the building loses.
 
 	-- Client-side carve rate limit. Also enforced server-side.
-	MinCarveInterval = 0.06,
+	MinCarveInterval = 0.01,
 
 	--------------------------------------------------------------------------------
 	-- SERVER VALIDATION CLAMPS (client requests outside these are rejected)
 	--------------------------------------------------------------------------------
 
 	-- A carve must happen near the requesting player's own root.
-	MaxCarveDistanceFromPlayer = 120,
+	MaxCarveDistanceFromPlayer = 250,
 	-- Hard clamp on the radius a client may ask for.
-	MaxRequestRadius = 24,
+	MaxRequestRadius = 100,
 	-- Hard floor on voxel size a client may ask for (small = expensive).
-	MinRequestVoxelSize = 15,
+	MinRequestVoxelSize = 10,
 	-- Server-side rate limit per player, slightly looser than the client's to
 	-- tolerate jitter.
-	ServerMinCarveInterval = 0.01,
+	ServerMinCarveInterval = 0.7,
 }
 
 -- Names of Workspace folders whose descendants are destructible.

@@ -515,6 +515,28 @@ end
 	These parts keep CanQuery = true even with ClientCollisionEnabled off
 	precisely so they remain probe-able.
 ]]
+--[[
+	Census of voxels this CLIENT is rendering, by type.
+
+	Deliberately separate from the server's numbers: the client skips distant
+	debris (DEBRIS_RENDER_DISTANCE) and frozen chunks arrive as plain static
+	entries, so a mismatch between the two columns is information, not a bug —
+	it shows how much the client is culling.
+]]
+function VoxelDestructionController:GetCensus(): (number, number)
+	local dynamic, static = 0, 0
+
+	for _, entry in voxels do
+		if entry.Dynamic then
+			dynamic += 1
+		else
+			static += 1
+		end
+	end
+
+	return dynamic, static
+end
+
 function VoxelDestructionController:GetVisualContainer(): Instance?
 	return voxelContainer
 end

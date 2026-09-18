@@ -41,6 +41,11 @@ local Core
 local Config
 local Flight
 local Destruction
+local Voxels
+
+-- Latest server voxel census (Net.VoxelCensus). Server-owned truth; the client
+-- only knows what it was told to render.
+local census = { Shell = 0, Live = 0, Frozen = 0, Capacity = 0 }
 
 DebugController.Enabled = false
 DebugController.GizmosEnabled = true
@@ -222,6 +227,26 @@ function DebugController:_render()
 	line("Carve radius @ travel", Config.GetCarveRadius(velocity.Magnitude))
 	line("Voxel size @ travel", Config.GetMinVoxelSize(velocity.Magnitude))
 
+	Iris.SeparatorText({ "Voxels (server)" })
+	local serverTotal = census.Shell + census.Live + census.Frozen
+	line("Static shell", census.Shell)
+	line("Debris (live)", census.Live)
+	line("Debris (frozen)", census.Frozen)
+	line("Total", serverTotal)
+	line("Pool capacity", census.Capacity)
+	line(
+		"Pool used",
+		census.Capacity > 0
+			and string.format("%.1f%%", serverTotal / census.Capacity * 100)
+			or "n/a"
+	)
+
+	Iris.SeparatorText({ "Voxels (this client)" })
+	local clientDynamic, clientStatic = Voxels:GetCensus()
+	line("Dynamic", clientDynamic)
+	line("Static", clientStatic)
+	line("Total", clientDynamic + clientStatic)
+
 	Iris.End()
 end
 
@@ -238,6 +263,15 @@ function DebugController:Start()
 	Config = Core:Get("FlightConfig")
 	Flight = Core:Get("FlightController")
 	Destruction = Core:Get("FlightDestructionController")
+	Voxels = Core:Get("VoxelDestructionController")
+
+	local Net = Core:Get("Net")
+	self._trove:Add(Net.VoxelCensus.OnClientEvent:Connect(function(shell, live, frozen, capacity)
+		census.Shell = shell
+		census.Live = live
+		census.Frozen = frozen
+		census.Capacity = capacity
+	end))
 
 	if not IRIS_INITIALIZED then
 		Iris.Init()
