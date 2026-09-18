@@ -64,7 +64,7 @@ FlightConfig.Flight = {
 	UpKey = Enum.KeyCode.E,
 	DownKey = Enum.KeyCode.Q,
 	-- Frees the cursor so the debug panel (key 9) is clickable while flying.
-	MouseUnlockKey = Enum.KeyCode.Eight,
+	MouseUnlockKey = Enum.KeyCode.T,
 }
 
 --[[

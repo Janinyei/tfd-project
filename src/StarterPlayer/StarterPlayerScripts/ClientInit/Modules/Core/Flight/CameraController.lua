@@ -109,7 +109,7 @@ function CameraController:_update(dt: number)
 	-- on input-mode changes, and silently steals the camera back if we don't.
 	camera.CameraType = Enum.CameraType.Scriptable
 	-- Cursor is hidden only while the mouse is captured; with capture released
-	-- (key 8) it must be visible to aim at the debug panel.
+	-- (key T) it must be visible to aim at the debug panel.
 	UserInputService.MouseIconEnabled = not Flight:IsMouseLocked()
 
 	-- The camera IS the aim: mouse drives this directly, and movement follows it.
