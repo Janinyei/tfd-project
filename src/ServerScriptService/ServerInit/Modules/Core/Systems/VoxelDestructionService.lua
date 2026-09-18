@@ -69,6 +69,12 @@ local FORCE_FREEZE_TIME = 8
 local MAX_DEBRIS_AGE = 30
 -- Extra distance below a chunk that still counts as resting on something.
 local SUPPORT_MARGIN = 1.5
+--[[
+	Extra radius searched for frozen rubble to wake when a carve lands nearby.
+	Frozen chunks are anchored, so rubble resting on a wall that later gets
+	destroyed would hang in the air; waking it lets it fall.
+]]
+local WAKE_MARGIN = 6
 
 --[[
 	The sim-part pool is finite (SIM_PART_CAPACITY) and wreckage never expires, so
@@ -140,6 +146,8 @@ local FLAG_DYNAMIC = 1
 -- Physics-record flag (offset 20): final transform, client should anchor and
 -- stop interpolating this voxel. See _freezeVoxel.
 local FLAG_FREEZE = 1
+-- Physics-record flag: this chunk is live again, resume interpolating it.
+local FLAG_UNFREEZE = 2
 local STATIC_CREATE_BYTES = 39
 local DYNAMIC_CREATE_BYTES = 51
 local PHYSICS_UPDATE_BYTES = 21
@@ -158,6 +166,12 @@ local activeDynamicVoxels = {}
 	one-off freeze sync — only consuming a pooled part. Drained from the front
 	when the pool comes under pressure.
 ]]
+--[[
+	Reverse lookup for spatial queries: a query returns parts, and waking frozen
+	rubble needs the voxel id that owns each one.
+]]
+local partToVoxelId: { [BasePart]: number } = {}
+
 local frozenOrder = {}
 local frozenHead = 1
 local frozenCount = 0
@@ -420,8 +434,9 @@ function VoxelDestructionService:_extractActiveVoxel(id: number)
 	end
 
 	activeVoxels[id] = nil
-	if entry.Dynamic then
-		activeDynamicVoxels[id] = nil
+	activeDynamicVoxels[id] = nil
+	if entry.Part then
+		partToVoxelId[entry.Part] = nil
 	end
 
 	return entry
@@ -648,9 +663,59 @@ function VoxelDestructionService:_freezeVoxel(id: number, entry)
 	}
 end
 
+--[[
+	Wake frozen rubble near a carve.
+
+	Frozen chunks are ANCHORED, so rubble that settled on a wall keeps hanging
+	there after that wall is destroyed — visibly floating. Any carve therefore
+	re-wakes frozen chunks in its neighbourhood and lets physics decide whether
+	they still have support.
+
+	Spatial query, not a scan: with thousands of frozen chunks a linear pass per
+	carve (up to ~16 carves/s) would become the most expensive thing in the
+	system, while this only touches what is actually nearby.
+]]
+function VoxelDestructionService:_wakeFrozenNear(center: Vector3, radius: number): { any }?
+	if not simFolder then
+		return nil
+	end
+
+	local params = OverlapParams.new()
+	params.FilterType = Enum.RaycastFilterType.Include
+	params.FilterDescendantsInstances = { simFolder }
+	params.RespectCanCollide = false
+
+	local woken = nil
+	local now = os.clock()
+
+	for _, part in workspace:GetPartBoundsInRadius(center, radius, params) do
+		local id = partToVoxelId[part]
+		local entry = id and activeVoxels[id]
+		if not entry or not entry.Frozen then
+			continue
+		end
+
+		entry.Frozen = false
+		entry.Dynamic = true
+		entry.RestClock = 0
+		-- Fresh age clock: a chunk that just lost its support deserves a full
+		-- settle window, not an instant re-freeze from FORCE_FREEZE_TIME.
+		entry.SpawnClock = now
+		activeDynamicVoxels[id] = entry
+
+		part.Anchored = false
+		frozenCount -= 1
+
+		woken = woken or {}
+		table.insert(woken, { Id = id, CFrame = part.CFrame })
+	end
+
+	return woken
+end
+
 -- One buffer carrying every freeze this tick, in the physics record format with
 -- FLAG_FREEZE set.
-function VoxelDestructionService:_fireFreeze(frozen: { any })
+function VoxelDestructionService:_fireFreeze(frozen: { any }, flag: number?)
 	local buf = buffer.create(#frozen * PHYSICS_UPDATE_BYTES)
 	local offset = 0
 
@@ -666,7 +731,7 @@ function VoxelDestructionService:_fireFreeze(frozen: { any })
 		buffer.writei16(buf, offset + 14, clampI16Scaled(math.deg(rx), 100))
 		buffer.writei16(buf, offset + 16, clampI16Scaled(math.deg(ry), 100))
 		buffer.writei16(buf, offset + 18, clampI16Scaled(math.deg(rz), 100))
-		buffer.writeu8(buf, offset + 20, FLAG_FREEZE)
+		buffer.writeu8(buf, offset + 20, flag or FLAG_FREEZE)
 
 		offset += PHYSICS_UPDATE_BYTES
 	end
@@ -695,13 +760,21 @@ function VoxelDestructionService:_evictFrozenUnderPressure()
 		frozenHead += 1
 		frozenCount -= 1
 
-		local entry = self:_extractActiveVoxel(id)
-		if entry then
-			self:_returnVoxelEntry(entry)
-			self:_queueFreeVoxelId(id, ID_REUSE_DELAY)
-			evictedIds = evictedIds or {}
-			table.insert(evictedIds, id)
-			used -= 1
+		--[[
+			The queue can contain ids that have been woken since freezing (see
+			_wakeFrozenNear). Those are live debris again and must not be
+			recycled — drop them from the queue instead.
+		]]
+		local queued = activeVoxels[id]
+		if queued and queued.Frozen then
+			local entry = self:_extractActiveVoxel(id)
+			if entry then
+				self:_returnVoxelEntry(entry)
+				self:_queueFreeVoxelId(id, ID_REUSE_DELAY)
+				evictedIds = evictedIds or {}
+				table.insert(evictedIds, id)
+				used -= 1
+			end
 		end
 	end
 
@@ -950,6 +1023,7 @@ function VoxelDestructionService:_buildStaticShell(
 			Dynamic = false,
 			OriginalPart = part,
 		}
+		partToVoxelId[simPart] = id
 
 		table.insert(newStaticIds, id)
 		table.insert(bulkParts, simPart)
@@ -1375,6 +1449,7 @@ function VoxelDestructionService:_destroyVolume(
 					RestClock = 0,
 				}
 				activeDynamicVoxels[id] = activeVoxels[id]
+				partToVoxelId[simPart] = id
 
 				table.insert(session.DynamicIds, id)
 				table.insert(bulkMoveParts, simPart)
@@ -1416,6 +1491,7 @@ function VoxelDestructionService:_destroyVolume(
 					Dynamic = false,
 					OriginalPart = part,
 				}
+				partToVoxelId[simPart] = id
 
 				table.insert(newStaticIds, id)
 				table.insert(bulkMoveParts, simPart)
@@ -1452,6 +1528,16 @@ function VoxelDestructionService:_destroyVolume(
 	end
 
 	self:_fireSync(allCleanupIds, allCreateEntries)
+
+	--[[
+		Whatever this carve removed may have been holding frozen rubble up, so
+		wake frozen chunks around the volume and let physics re-decide. Without
+		it, rubble that settled on a destroyed wall stays anchored in mid-air.
+	]]
+	local woken = self:_wakeFrozenNear(volumeCenter, volumeRadius + WAKE_MARGIN)
+	if woken then
+		self:_fireFreeze(woken, FLAG_UNFREEZE)
+	end
 
 	for _, session in sessionsCreated do
 		if session.ResetTime then

@@ -75,6 +75,11 @@ local FLAG_DYNAMIC = 1
 -- it, drop it from interpolation, keep it forever. Server-side counterpart is
 -- VoxelDestructionService._freezeVoxel.
 local FLAG_FREEZE = 1
+--[[
+	Physics-record flag: this chunk is live again (its support was destroyed).
+	Resume interpolating it from the transform in the same record.
+]]
+local FLAG_UNFREEZE = 2
 local STATIC_CREATE_BYTES = 39
 local DYNAMIC_CREATE_BYTES = 51
 local PHYSICS_UPDATE_BYTES = 21
@@ -403,6 +408,23 @@ function VoxelDestructionController:_onPhysics(buf: buffer?)
 		end
 
 		local target = readPhysicsCFrame(buf, baseOffset)
+		local flags = buffer.readu8(buf, baseOffset + 20)
+
+		--[[
+			Unfreeze: the server destroyed whatever this chunk was resting on, so
+			it is simulated again. Put it back in the interpolation set and seed
+			both ends of the lerp from the authoritative transform, otherwise the
+			first frame would interpolate from a stale pose.
+		]]
+		if bit32.band(flags, FLAG_UNFREEZE) ~= 0 then
+			entry.Dynamic = true
+			entry.Part.CFrame = target
+			entry.StartCFrame = target
+			entry.TargetCFrame = target
+			entry.LastSnapshotTime = now
+			dynamicVisuals[id] = entry
+			continue
+		end
 
 		--[[
 			Freeze: the server has anchored this chunk and will never send another
@@ -412,7 +434,7 @@ function VoxelDestructionController:_onPhysics(buf: buffer?)
 			Must snap rather than lerp: no further snapshots arrive, so an
 			interpolated entry would stall partway to its final pose.
 		]]
-		if bit32.band(buffer.readu8(buf, baseOffset + 20), FLAG_FREEZE) ~= 0 then
+		if bit32.band(flags, FLAG_FREEZE) ~= 0 then
 			entry.Dynamic = false
 			dynamicVisuals[id] = nil
 			entry.Part.CFrame = target
@@ -422,6 +444,12 @@ function VoxelDestructionController:_onPhysics(buf: buffer?)
 			-- craft, which is exactly what the group split avoids.
 			entry.StartCFrame = target
 			entry.TargetCFrame = target
+			continue
+		end
+
+		if not entry.Dynamic then
+			-- Frozen chunks receive no further transforms; ignore stragglers that
+			-- were already in flight when it froze.
 			continue
 		end
 
