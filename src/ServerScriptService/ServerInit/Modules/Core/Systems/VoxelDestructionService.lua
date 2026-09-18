@@ -119,6 +119,14 @@ local PHYSICS_SNAPSHOT_INTERVAL = 1 / PHYSICS_SNAPSHOT_RATE
 local DEBRIS_RECYCLE_DELAY = 0.1
 local ID_REUSE_DELAY = 1.25
 
+--[[
+	HARD cap on live voxels, enforced in acquireVoxel.
+
+	PartCache's ExpansionSize is left in place only as a backstop: this counter
+	is what actually bounds the system, so the number is a real ceiling rather
+	than a suggestion. Must stay under MAX_VOXEL_ID, since every live voxel needs
+	a distinct u16 id.
+]]
 local SIM_PART_CAPACITY = 30000
 
 -- Seconds between debug census broadcasts.
@@ -175,6 +183,22 @@ local partToVoxelId: { [BasePart]: number } = {}
 local frozenOrder = {}
 local frozenHead = 1
 local frozenCount = 0
+
+--[[
+	HARD CAP accounting.
+
+	PartCache recycles parts but does NOT bound them: with ExpansionSize set it
+	silently allocates more whenever it runs dry, so "pool capacity" was never a
+	ceiling — it was just the input to the eviction threshold. Permanent
+	destruction means static shell grows forever, so without a real cap the
+	server accumulates parts until it degrades.
+
+	activeVoxelCount is the authoritative live count and SIM_PART_CAPACITY is now
+	a genuine limit: past it, allocation fails and a carve simply does less. That
+	is a visible, graceful degradation instead of invisible bloat.
+]]
+local activeVoxelCount = 0
+local deniedAllocations = 0
 
 local nextSessionKey = 0
 
@@ -402,6 +426,32 @@ local function acquireSimPart(): BasePart
 	return simCache:GetPart()
 end
 
+--[[
+	The one place a voxel comes into existence. Enforces the cap, allocates the
+	id, takes a pooled part and registers the reverse lookup, so no call site can
+	bypass the ceiling or forget the bookkeeping.
+
+	Returns nil when the pool is full; callers skip that piece and the carve
+	simply removes less.
+]]
+local function acquireVoxel(): (number?, BasePart?)
+	if activeVoxelCount >= SIM_PART_CAPACITY then
+		deniedAllocations += 1
+		return nil, nil
+	end
+
+	local id = allocVoxelId()
+	if not id then
+		deniedAllocations += 1
+		return nil, nil
+	end
+
+	local part = acquireSimPart()
+	activeVoxelCount += 1
+	partToVoxelId[part] = id
+	return id, part
+end
+
 local function configureSimPart(part: BasePart, size: Vector3)
 	part.Size = size
 	part.Anchored = true
@@ -435,6 +485,7 @@ function VoxelDestructionService:_extractActiveVoxel(id: number)
 
 	activeVoxels[id] = nil
 	activeDynamicVoxels[id] = nil
+	activeVoxelCount -= 1
 	if entry.Part then
 		partToVoxelId[entry.Part] = nil
 	end
@@ -504,7 +555,13 @@ function VoxelDestructionService:Start()
 		if censusAccumulator >= CENSUS_INTERVAL and Net then
 			censusAccumulator = 0
 			local shell, live, frozen = self:GetCensus()
-			Net.VoxelCensus:Fire(shell, live, frozen, SIM_PART_CAPACITY)
+			Net.VoxelCensus:Fire(
+				shell,
+				live,
+				frozen,
+				math.min(SIM_PART_CAPACITY, 65535),
+				math.min(deniedAllocations, 65535)
+			)
 		end
 	end)
 end
@@ -747,10 +804,9 @@ end
 ]]
 function VoxelDestructionService:_evictFrozenUnderPressure()
 	local limit = math.floor(SIM_PART_CAPACITY * FROZEN_EVICTION_THRESHOLD)
-	local used = 0
-	for _ in activeVoxels do
-		used += 1
-	end
+	-- activeVoxelCount is maintained at the acquire/release chokepoints, so the
+	-- old O(n) scan over activeVoxels is unnecessary here.
+	local used = activeVoxelCount
 
 	local evictedIds = nil
 
@@ -1028,12 +1084,11 @@ function VoxelDestructionService:_buildStaticShell(
 			continue
 		end
 
-		local id = allocVoxelId()
-		if not id then
+		local id, simPart = acquireVoxel()
+		if not id or not simPart then
 			continue
 		end
 
-		local simPart = acquireSimPart()
 		configureSimPart(simPart, pieceSize)
 
 		activeVoxels[id] = {
@@ -1042,7 +1097,6 @@ function VoxelDestructionService:_buildStaticShell(
 			Dynamic = false,
 			OriginalPart = part,
 		}
-		partToVoxelId[simPart] = id
 
 		table.insert(newStaticIds, id)
 		table.insert(bulkParts, simPart)
@@ -1443,13 +1497,12 @@ function VoxelDestructionService:_destroyVolume(
 					math.random(-200, 200)
 				) / 100
 
-				local id = allocVoxelId()
-				if not id then
+				local id, simPart = acquireVoxel()
+				if not id or not simPart then
 					continue
 				end
 				totalVoxels += 1
 
-				local simPart = acquireSimPart()
 				configureSimPart(simPart, pieceSize)
 
 				activeVoxels[id] = {
@@ -1468,7 +1521,6 @@ function VoxelDestructionService:_destroyVolume(
 					RestClock = 0,
 				}
 				activeDynamicVoxels[id] = activeVoxels[id]
-				partToVoxelId[simPart] = id
 
 				table.insert(session.DynamicIds, id)
 				table.insert(bulkMoveParts, simPart)
@@ -1495,13 +1547,12 @@ function VoxelDestructionService:_destroyVolume(
 				continue
 
 			else
-				local id = allocVoxelId()
-				if not id then
+				local id, simPart = acquireVoxel()
+				if not id or not simPart then
 					continue
 				end
 				totalVoxels += 1
 
-				local simPart = acquireSimPart()
 				configureSimPart(simPart, pieceSize)
 
 				activeVoxels[id] = {
@@ -1510,7 +1561,6 @@ function VoxelDestructionService:_destroyVolume(
 					Dynamic = false,
 					OriginalPart = part,
 				}
-				partToVoxelId[simPart] = id
 
 				table.insert(newStaticIds, id)
 				table.insert(bulkMoveParts, simPart)

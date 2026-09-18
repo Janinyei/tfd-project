@@ -53,14 +53,19 @@ Net.CarveResult = Packet("CarveResult", Packet.NumberU16)
 --[[
 	Live voxel census, broadcast at a low rate for the debug panel.
 
-	Payload: shell, live debris, frozen debris, sim-part pool capacity. All u16,
-	which is also the hard ceiling on voxel ids, so no field can overflow.
+	Payload: shell, live debris, frozen debris, pool capacity, denied allocations.
+	All u16, which is also the ceiling on voxel ids, so no field can overflow.
+
+	"Denied" counts voxels a carve wanted but could not have because the pool was
+	full. Non-zero means destruction is being silently reduced, which is exactly
+	the failure that used to hide behind PartCache quietly expanding.
 
 	Sent from the server because these are server-owned truths: the client only
 	knows about voxels it was told to render, and skips distant debris entirely.
 ]]
 Net.VoxelCensus = Packet(
 	"VoxelCensus",
+	Packet.NumberU16,
 	Packet.NumberU16,
 	Packet.NumberU16,
 	Packet.NumberU16,
