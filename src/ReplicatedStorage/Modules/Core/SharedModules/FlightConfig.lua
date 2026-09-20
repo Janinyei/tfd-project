@@ -332,12 +332,27 @@ FlightConfig.Destruction = {
 	CarveRadiusPerSpeed = 0.035, -- + this * speed
 	CarveRadiusMax = 25,
 
-	-- Voxel granularity. Raised with speed: a big fast hole must not blow the
-	-- MAX_SUBDIVISIONS (2000) / SIM_PART_CAPACITY (4000) budget in
-	-- VoxelDestructionService.
-	MinVoxelSizeBase = 90,
-	MinVoxelSizePerSpeed = 0.03,
-	MinVoxelSizeMax = 100,
+	--[[
+		VOXEL GRANULARITY — the single knob that controls chunk size.
+
+		minVoxelSize = carveRadius / VoxelRadiusRatio
+
+		LOWER = bigger chunks = far fewer parts. Cost scales with the CUBE of
+		this, so small changes are dramatic:
+
+		  ratio 1.5 -> ~14 debris per max carve
+		  ratio 2.0 -> ~34
+		  ratio 2.5 -> ~65
+		  ratio 3.0 -> ~113
+
+		Floor is about 1.7: below that the carve sphere is barely larger than one
+		voxel, nothing tests as "fully inside" it, and walls hollow out without
+		breaching. Do not go under 1.5.
+
+		Tied to radius rather than speed on purpose — a big hole made of tiny
+		voxels is what actually costs, not speed itself.
+	]]
+	VoxelRadiusRatio = 1.8,
 
 	DebrisForceBase = 100,
 	DebrisForcePerSpeed = 0.1,
@@ -358,7 +373,7 @@ FlightConfig.Destruction = {
 	-- is meant to feel like the building loses.
 
 	-- Client-side carve rate limit. Also enforced server-side.
-	MinCarveInterval = 0.1,
+	MinCarveInterval = 0.08,
 
 	--------------------------------------------------------------------------------
 	-- SERVER VALIDATION CLAMPS (client requests outside these are rejected)
@@ -366,10 +381,6 @@ FlightConfig.Destruction = {
 
 	-- A carve must happen near the requesting player's own root.
 	MaxCarveDistanceFromPlayer = 250,
-	-- Hard clamp on the radius a client may ask for.
-	MaxRequestRadius = 100,
-	-- Hard floor on voxel size a client may ask for (small = expensive).
-	MinRequestVoxelSize = 15,
 	-- Server-side rate limit per player, slightly looser than the client's to
 	-- tolerate jitter.
 	ServerMinCarveInterval = 0.01,
@@ -390,9 +401,13 @@ function FlightConfig.GetCarveRadius(speed: number): number
 	return math.min(d.CarveRadiusBase + d.CarveRadiusPerSpeed * speed, d.CarveRadiusMax)
 end
 
-function FlightConfig.GetMinVoxelSize(speed: number): number
-	local d = FlightConfig.Destruction
-	return math.min(d.MinVoxelSizeBase + d.MinVoxelSizePerSpeed * speed, d.MinVoxelSizeMax)
+--[[
+	Voxel edge length for a carve of the given radius. One definition, shared by
+	the client (debug readout) and the server (authoritative value), so the two
+	can never disagree.
+]]
+function FlightConfig.GetMinVoxelSize(carveRadius: number): number
+	return carveRadius / FlightConfig.Destruction.VoxelRadiusRatio
 end
 
 function FlightConfig.GetDebrisForce(speed: number): number

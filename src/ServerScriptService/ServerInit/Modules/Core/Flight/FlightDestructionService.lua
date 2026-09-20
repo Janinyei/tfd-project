@@ -10,12 +10,12 @@
 	table:
 	  * rate limit per player;
 	  * the carve must be near the requesting player's own root;
-	  * radius clamped to MaxRequestRadius;
+	  * radius and voxel size DERIVED server-side, never accepted from the client;
 	  * requests below MinCarveSpeed rejected outright, and cross-checked against
 	    the server's own measurement of the player's velocity;
-	  * speed capped at BoostMaxSpeed + StrafeSpeed + HoverSpeed, then force and
-	    voxel size are DERIVED from it rather than sent by the client — a client
-	    cannot ask for 0.1-stud voxels and blow the subdivision budget.
+	  * speed capped at the fastest legitimate travel, then radius, voxel size
+	    and debris force all derived from it — a client cannot ask for 0.1-stud
+	    voxels and blow the subdivision budget.
 ]]
 
 local Players = game:GetService("Players")
@@ -124,11 +124,12 @@ function FlightDestructionService:_onRequestCarve(
 	speed = math.min(speed, maxTravelSpeed)
 
 
-	-- Radius is DERIVED, never accepted from the client: the same shared helper
-	-- the client used, clamped to MaxRequestRadius.
-	local radius = math.min(Config.GetCarveRadius(speed), destruction.MaxRequestRadius)
+	-- Radius is DERIVED, never accepted from the client.
+	local radius = Config.GetCarveRadius(speed)
 
-	local minVoxelSize = math.max(Config.GetMinVoxelSize(speed), destruction.MinRequestVoxelSize)
+	-- Voxel size follows the radius through the one shared helper, so the single
+	-- VoxelRadiusRatio knob decides granularity everywhere.
+	local minVoxelSize = Config.GetMinVoxelSize(radius)
 
 	lastCarve[player] = now
 

@@ -25,6 +25,7 @@ local PartCache = require(ReplicatedStorage.Modules.Packages.PartCache)
 
 local Core
 local Net
+local Config
 local _voxelSyncEvent: RemoteEvent
 local _voxelPhysicsEvent: RemoteEvent
 
@@ -92,8 +93,9 @@ local MAX_SUBDIVISIONS = 2000
 local PIECE_BOUNDING_FACTOR = math.sqrt(3) * 0.5
 
 -- Voxels are never allowed to exceed the carve radius divided by this, so a
--- carve always has room to contain whole pieces.
-local MIN_VOXEL_RADIUS_RATIO = 2.5
+-- Granularity now lives in FlightConfig.Destruction.VoxelRadiusRatio so it is
+-- tunable in one place; this fallback only applies before Init resolves it.
+local FALLBACK_VOXEL_RADIUS_RATIO = 2
 
 --[[
 	Draw every destruction volume. Flip to true and EVERY DestroyBox/DestroyArea call
@@ -511,6 +513,7 @@ function VoxelDestructionService:Init(core)
 	-- the dedicated buffer remotes below, since a payload can exceed Packet's
 	-- 65535-byte per-field cap.
 	Net = core:Get("Net")
+	Config = core:Get("FlightConfig")
 end
 
 function VoxelDestructionService:Start()
@@ -1313,8 +1316,12 @@ function VoxelDestructionService:_destroyVolume(
 	]]
 	if volumeSpec.Shape ~= "Box" then
 		-- Guard against a degenerate request where voxels are large relative to
-		-- the hole: without it, compensation could balloon a tiny carve.
-		minVoxelSize = math.min(minVoxelSize, volumeSpec.Radius / MIN_VOXEL_RADIUS_RATIO)
+		-- Re-applied here because DestroyArea/DestroyBox are public: a caller may
+		-- pass any MinVoxelSize, and a voxel large relative to its carve leaves
+		-- nothing "fully inside", hollowing a wall without breaching it.
+		local ratio = (Config and Config.Destruction.VoxelRadiusRatio)
+			or FALLBACK_VOXEL_RADIUS_RATIO
+		minVoxelSize = math.min(minVoxelSize, volumeSpec.Radius / ratio)
 		volumeSpec.Radius += minVoxelSize * PIECE_BOUNDING_FACTOR
 	end
 

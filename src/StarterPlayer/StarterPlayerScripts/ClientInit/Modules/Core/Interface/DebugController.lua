@@ -230,7 +230,7 @@ function DebugController:_render()
 	line("Last hit parent", probe.LastHitParent)
 	line("Last carve radius", probe.CarveRadius)
 	line("Carve radius @ travel", Config.GetCarveRadius(velocity.Magnitude))
-	line("Voxel size @ travel", Config.GetMinVoxelSize(velocity.Magnitude))
+	line("Voxel size @ travel", Config.GetMinVoxelSize(Config.GetCarveRadius(velocity.Magnitude)))
 
 	Iris.SeparatorText({ "Voxels (server)" })
 	local serverTotal = census.Shell + census.Live + census.Frozen
