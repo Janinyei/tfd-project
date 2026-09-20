@@ -54,6 +54,7 @@ function TrailController:_buildTrail(character: Model, trove)
 	trail.Name = "BoostTrail"
 	trail.Attachment0 = top
 	trail.Attachment1 = bottom
+	trail.WidthScale = trailConfig.WidthScale
 	trail.Lifetime = trailConfig.Lifetime
 	trail.MinLength = trailConfig.MinLength
 	trail.Color = trailConfig.Color

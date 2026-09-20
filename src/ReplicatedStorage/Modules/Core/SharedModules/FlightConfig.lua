@@ -112,6 +112,15 @@ FlightConfig.Tilt = {
 FlightConfig.Trail = {
 	-- Vertical separation of the two attachments == trail width.
 	Width = 3,
+	--[[
+		Width along the trail's age: full at the craft, pinched to nothing at the
+		tail. Applied as Trail.WidthScale, so it is a multiplier on Width rather
+		than a second width in studs.
+	]]
+	WidthScale = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 1),
+		NumberSequenceKeypoint.new(1, 0),
+	}),
 	Lifetime = 0.45,
 	-- Studs the root must move before a new segment is emitted; stops a hovering
 	-- player from smearing a blob.
@@ -352,7 +361,7 @@ FlightConfig.Destruction = {
 		Tied to radius rather than speed on purpose — a big hole made of tiny
 		voxels is what actually costs, not speed itself.
 	]]
-	VoxelRadiusRatio = 0.5,
+	VoxelRadiusRatio = 1.5,
 
 	DebrisForceBase = 100,
 	DebrisForcePerSpeed = 0.1,
