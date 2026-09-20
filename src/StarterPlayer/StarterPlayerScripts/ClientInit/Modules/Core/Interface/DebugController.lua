@@ -45,7 +45,7 @@ local Voxels
 
 -- Latest server voxel census (Net.VoxelCensus). Server-owned truth; the client
 -- only knows what it was told to render.
-local census = { Shell = 0, Live = 0, Frozen = 0, Capacity = 0, Denied = 0 }
+local census = { Shell = 0, Live = 0, Frozen = 0, Capacity = 0, Denied = 0, ShellReuse = 0 }
 
 DebugController.Enabled = false
 DebugController.GizmosEnabled = true
@@ -240,6 +240,9 @@ function DebugController:_render()
 	line("Total", serverTotal)
 	line("Pool capacity (hard cap)", census.Capacity)
 	line("Denied allocations", census.Denied)
+	-- High is good: shell voxels the last carve recognised as unchanged and did
+	-- not rebuild or re-replicate.
+	line("Shell reused (last carve)", string.format("%d%%", census.ShellReuse))
 	line(
 		"Pool used",
 		census.Capacity > 0
@@ -272,12 +275,13 @@ function DebugController:Start()
 	Voxels = Core:Get("VoxelDestructionController")
 
 	local Net = Core:Get("Net")
-	self._trove:Add(Net.VoxelCensus.OnClientEvent:Connect(function(shell, live, frozen, capacity, denied)
+	self._trove:Add(Net.VoxelCensus.OnClientEvent:Connect(function(shell, live, frozen, capacity, denied, shellReuse)
 		census.Shell = shell
 		census.Live = live
 		census.Frozen = frozen
 		census.Capacity = capacity
 		census.Denied = denied
+		census.ShellReuse = shellReuse
 	end))
 
 	if not IRIS_INITIALIZED then

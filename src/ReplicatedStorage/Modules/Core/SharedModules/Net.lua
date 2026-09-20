@@ -73,7 +73,8 @@ Net.CarveResult = Packet("CarveResult", Packet.NumberU16)
 --[[
 	Live voxel census, broadcast at a low rate for the debug panel.
 
-	Payload: shell, live debris, frozen debris, pool capacity, denied allocations.
+	Payload: shell, live debris, frozen debris, pool capacity, denied allocations,
+	shell voxels reused by the last carve as a percentage of that carve's shell.
 	All u16, which is also the ceiling on voxel ids, so no field can overflow.
 
 	"Denied" counts voxels a carve wanted but could not have because the pool was
@@ -93,6 +94,7 @@ Net.VoxelsReset = Packet("VoxelsReset")
 
 Net.VoxelCensus = Packet(
 	"VoxelCensus",
+	Packet.NumberU16,
 	Packet.NumberU16,
 	Packet.NumberU16,
 	Packet.NumberU16,

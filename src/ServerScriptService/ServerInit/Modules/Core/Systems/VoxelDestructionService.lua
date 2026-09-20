@@ -99,6 +99,14 @@ local PIECE_BOUNDING_FACTOR = math.sqrt(3) * 0.5
 local FALLBACK_VOXEL_RADIUS_RATIO = 2
 
 --[[
+	Shell reuse from the last carve, for the debug panel only. High is good: it
+	is the fraction of surviving shell voxels the delta path recognised and left
+	alone instead of recreating and re-replicating.
+]]
+local lastShellReused = 0
+local lastShellTotal = 0
+
+--[[
 	Draw every destruction volume. Flip to true and EVERY DestroyBox/DestroyArea call
 	renders its own region — no per-call opt-in, no manual calls.
 
@@ -436,6 +444,21 @@ end
 -- SIM PART HELPERS
 --------------------------------------------------------------------------------
 
+--[[
+	Stable identity for a shell piece: its centre and size, quantised.
+
+	Subdivision is deterministic, so an untouched region of a part yields the
+	SAME pieces on every carve. Keying by geometry lets a rebuild recognise those
+	and leave them alone instead of destroying and recreating identical voxels.
+]]
+local function shellKey(cf: CFrame, size: Vector3): string
+	local p = cf.Position
+	return string.format(
+		"%.2f_%.2f_%.2f_%.2f_%.2f_%.2f",
+		p.X, p.Y, p.Z, size.X, size.Y, size.Z
+	)
+end
+
 local function acquireSimPart(): BasePart
 	return simCache:GetPart()
 end
@@ -575,7 +598,8 @@ function VoxelDestructionService:Start()
 				live,
 				frozen,
 				math.min(SIM_PART_CAPACITY, 65535),
-				math.min(deniedAllocations, 65535)
+				math.min(deniedAllocations, 65535),
+				self:GetShellReusePercent()
 			)
 		end
 	end)
@@ -860,6 +884,17 @@ end
 	number is worse than no number. Bounded by SIM_PART_CAPACITY and only run at
 	CENSUS_INTERVAL, so the cost is irrelevant.
 ]]
+--[[
+	Percentage of this carve's shell that was reused rather than rebuilt. 0 when
+	nothing was carved, which reads correctly as "no work done".
+]]
+function VoxelDestructionService:GetShellReusePercent(): number
+	if lastShellTotal <= 0 then
+		return 0
+	end
+	return math.floor((lastShellReused / lastShellTotal) * 100 + 0.5)
+end
+
 function VoxelDestructionService:GetCensus(): (number, number, number)
 	local shell, live, frozen = 0, 0, 0
 
@@ -1096,6 +1131,9 @@ function VoxelDestructionService:_teardownStaticShell(managed): ({ number }, { a
 	end
 
 	managed.staticIds = {}
+	-- The geometry index must die with the shell it describes, or a later carve
+	-- would "reuse" ids that no longer exist.
+	managed.shellByKey = {}
 	return tornIds, tornEntries
 end
 
@@ -1107,6 +1145,9 @@ function VoxelDestructionService:_buildStaticShell(
 ): ({ number }, { any })
 	local newStaticIds = {}
 	local createEntries = {}
+	-- Indexed exactly as a carve would, so the NEXT carve on this part can reuse
+	-- these voxels instead of rebuilding them, and can retire them if they go.
+	local newShellByKey = {}
 
 	local pieces = self:_subdivideMath(
 		part.CFrame,
@@ -1117,6 +1158,7 @@ function VoxelDestructionService:_buildStaticShell(
 
 	if not pieces then
 		managed.staticIds = newStaticIds
+		managed.shellByKey = newShellByKey
 		return newStaticIds, createEntries
 	end
 
@@ -1154,6 +1196,7 @@ function VoxelDestructionService:_buildStaticShell(
 			OriginalPart = part,
 		}
 
+		newShellByKey[shellKey(piece.CF, pieceSize)] = id
 		table.insert(newStaticIds, id)
 		table.insert(bulkParts, simPart)
 		table.insert(bulkCFrames, piece.CF)
@@ -1170,6 +1213,7 @@ function VoxelDestructionService:_buildStaticShell(
 	end
 
 	managed.staticIds = newStaticIds
+	managed.shellByKey = newShellByKey
 	return newStaticIds, createEntries
 end
 
@@ -1418,6 +1462,10 @@ function VoxelDestructionService:_destroyVolume(
 	end
 
 	local allCreateEntries = {}
+
+	-- Per-carve window for the reuse readout.
+	lastShellReused = 0
+	lastShellTotal = 0
 	local allCleanupIds = {}
 	local sessionsCreated = {}
 
@@ -1470,16 +1518,20 @@ function VoxelDestructionService:_destroyVolume(
 		managed.sessions[sessionKey] = session
 		managed.minVoxelSize = math.min(managed.minVoxelSize, minVoxelSize)
 
-		-- Tear down old static shell
-		local oldShellIds, oldShellEntries = self:_teardownStaticShell(managed)
-		for _, id in oldShellIds do
-			table.insert(allCleanupIds, id)
-			self:_queueFreeVoxelId(id, ID_REUSE_DELAY)
-		end
-		-- Return old shell parts immediately — PartCache is synchronous, no race
-		for _, entry in oldShellEntries do
-			self:_returnVoxelEntry(entry)
-		end
+		--[[
+			DELTA SHELL.
+
+			This used to tear the whole shell down and rebuild it every carve,
+			re-sending every surviving voxel to every client — the largest
+			recurring stream, and one that grew with accumulated damage.
+
+			Now the previous shell is indexed by geometry. Pieces that come back
+			identical keep their existing voxel: no cleanup, no create entry, no
+			BulkMoveTo. Whatever is left unclaimed afterwards is what genuinely
+			disappeared, and only that is torn down.
+		]]
+		local oldShellByKey = managed.shellByKey or {}
+		local newShellByKey = {}
 
 		-- Add new destruction volume. Copies the shape spec and tags it with this session so
 		-- regen can remove exactly this volume later.
@@ -1501,6 +1553,16 @@ function VoxelDestructionService:_destroyVolume(
 		)
 
 		if not pieces then
+			-- Part fully consumed: retire every shell voxel it still owned.
+			for _, id in oldShellByKey do
+				local entry = self:_extractActiveVoxel(id)
+				if entry then
+					self:_returnVoxelEntry(entry)
+					table.insert(allCleanupIds, id)
+					self:_queueFreeVoxelId(id, ID_REUSE_DELAY)
+				end
+			end
+			managed.shellByKey = {}
 			managed.staticIds = {}
 			table.insert(sessionsCreated, session)
 			continue
@@ -1607,6 +1669,17 @@ function VoxelDestructionService:_destroyVolume(
 				continue
 
 			else
+				local key = shellKey(piece.CF, pieceSize)
+				local existing = oldShellByKey[key]
+
+				if existing and activeVoxels[existing] then
+					-- Identical to last carve: already correct on the server and
+					-- on every client, so it costs nothing this time.
+					newShellByKey[key] = existing
+					oldShellByKey[key] = nil
+					continue
+				end
+
 				local id, simPart = acquireVoxel()
 				if not id or not simPart then
 					continue
@@ -1622,7 +1695,7 @@ function VoxelDestructionService:_destroyVolume(
 					OriginalPart = part,
 				}
 
-				table.insert(newStaticIds, id)
+				newShellByKey[key] = id
 				table.insert(bulkMoveParts, simPart)
 				table.insert(bulkMoveCFrames, piece.CF)
 
@@ -1638,6 +1711,26 @@ function VoxelDestructionService:_destroyVolume(
 			end
 		end
 
+		--[[
+			Anything still in oldShellByKey was not reproduced by this
+			subdivision, so it is geometry that genuinely went away. Only these
+			get torn down, and only these enter the cleanup list.
+		]]
+		for _, id in oldShellByKey do
+			local entry = self:_extractActiveVoxel(id)
+			if entry then
+				self:_returnVoxelEntry(entry)
+				table.insert(allCleanupIds, id)
+				self:_queueFreeVoxelId(id, ID_REUSE_DELAY)
+			end
+		end
+
+		managed.shellByKey = newShellByKey
+
+		local newStaticIds = {}
+		for _, id in newShellByKey do
+			table.insert(newStaticIds, id)
+		end
 		managed.staticIds = newStaticIds
 		table.insert(sessionsCreated, session)
 	end
@@ -1834,6 +1927,7 @@ function VoxelDestructionService:_regenSession(session)
 			end
 		end
 		managed.staticIds = {}
+		managed.shellByKey = {}
 
 		self:_fireSync(shellCleanupIds, nil)
 
