@@ -92,6 +92,10 @@ FlightConfig.Tilt = {
 
 	-- Bank: degrees of roll per radian/sec of yaw. Higher = leans harder into
 	-- the same turn. This is the knob for how dramatic turns feel.
+	-- Minimum HORIZONTAL speed before the body banks at all. Without this,
+	-- hovering with E/Q and moving the mouse rolls the character while it flies
+	-- straight up, which reads as spinning rather than leaning into a turn.
+	BankMinFlatSpeed = 1,
 	BankPerYawRate = 0.1,
 	-- Hard clamp in degrees, so a mouse flick cannot put the body sideways.
 	BankLimit = 35,

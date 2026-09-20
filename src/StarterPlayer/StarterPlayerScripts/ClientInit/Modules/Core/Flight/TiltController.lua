@@ -124,7 +124,19 @@ function TiltController:_updateBank(dt: number)
 	local tilt = Config.Tilt
 	local target = 0
 
-	if Flight:IsFlying() then
+	--[[
+		Bank only while actually travelling HORIZONTALLY.
+
+		Yaw rate alone is not enough: hovering on E/Q and sweeping the mouse
+		would roll the body while the character goes straight up or down, which
+		reads as spinning in place rather than leaning into a turn. There is no
+		turn to lean into unless there is lateral motion, so the flat velocity is
+		what gates it.
+	]]
+	local velocity = Flight:GetVelocity()
+	local flatSpeed = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
+
+	if Flight:IsFlying() and flatSpeed > tilt.BankMinFlatSpeed then
 		target = math.clamp(
 			Flight:GetYawRate() * tilt.BankPerYawRate,
 			-math.rad(tilt.BankLimit),
