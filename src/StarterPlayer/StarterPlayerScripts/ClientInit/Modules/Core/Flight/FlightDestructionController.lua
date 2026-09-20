@@ -294,7 +294,9 @@ function FlightDestructionController:_update(dt: number)
 	probeDebug.CarveClock = now
 	probeDebug.CarveCount += 1
 
-	Net.RequestCarve:Fire(carvePosition, radius, direction, speed)
+	-- One vector: direction and speed are both in it, and radius is derived
+	-- server-side from the same helper used above.
+	Net.RequestCarve:Fire(carvePosition, travel)
 	self:_predictNoclip(carvePosition, radius)
 
 	Camera:ShakeCarve(radius, speed)

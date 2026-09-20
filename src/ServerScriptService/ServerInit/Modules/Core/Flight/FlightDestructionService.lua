@@ -49,11 +49,16 @@ end
 function FlightDestructionService:_onRequestCarve(
 	player: Player,
 	position: Vector3,
-	radius: number,
-	direction: Vector3,
-	speed: number
+	velocity: Vector3
 )
 	local destruction = Config.Destruction
+
+	-- Direction and speed both come from the one vector.
+	local speed = velocity.Magnitude
+	if speed < 1e-3 then
+		return
+	end
+	local direction = velocity / speed
 
 	local now = os.clock()
 	local previous = lastCarve[player]
@@ -68,10 +73,6 @@ function FlightDestructionService:_onRequestCarve(
 
 	-- A player may only carve near their own body.
 	if (position - root.Position).Magnitude > destruction.MaxCarveDistanceFromPlayer then
-		return
-	end
-
-	if direction.Magnitude < 1e-3 then
 		return
 	end
 
@@ -117,10 +118,9 @@ function FlightDestructionService:_onRequestCarve(
 	)
 	speed = math.min(speed, maxTravelSpeed)
 
-	-- The client's requested radius is honoured only up to the clamp, and never
-	-- beyond what its claimed speed justifies.
-	local allowedRadius = math.min(Config.GetCarveRadius(speed), destruction.MaxRequestRadius)
-	radius = math.clamp(radius, 1, allowedRadius)
+	-- Radius is DERIVED, never accepted from the client: the same shared helper
+	-- the client used, clamped to MaxRequestRadius.
+	local radius = math.min(Config.GetCarveRadius(speed), destruction.MaxRequestRadius)
 
 	local minVoxelSize = math.max(Config.GetMinVoxelSize(speed), destruction.MinRequestVoxelSize)
 
@@ -129,7 +129,7 @@ function FlightDestructionService:_onRequestCarve(
 	-- Returns how many voxels were knocked loose, so the stat counts real
 	-- destruction rather than carve requests: a carve that hit nothing, or hit a
 	-- region already hollowed out, credits zero.
-	local destroyed = Voxel:DestroyArea(position, radius, direction.Unit, Config.GetDebrisForce(speed), {
+	local destroyed = Voxel:DestroyArea(position, radius, direction, Config.GetDebrisForce(speed), {
 		MinVoxelSize = minVoxelSize,
 		ResetTime = destruction.ResetTime,
 	})
@@ -154,8 +154,8 @@ function FlightDestructionService:Start()
 	Voxel = Core:Get("VoxelDestructionService")
 	Stats = Core:Get("StatsService")
 
-	Net.RequestCarve.OnServerEvent:Connect(function(player, position, radius, direction, speed)
-		self:_onRequestCarve(player, position, radius, direction, speed)
+	Net.RequestCarve.OnServerEvent:Connect(function(player, position, velocity)
+		self:_onRequestCarve(player, position, velocity)
 	end)
 
 	Players.PlayerRemoving:Connect(function(player)

@@ -18,22 +18,24 @@ local Net = {}
 --------------------------------------------------------------------------------
 
 --[[
-	Client's spherecast hit a destructible part and is asking the server to carve.
+	Client's spherecast hit destructible geometry and is asking the server to
+	carve.
 
-	position   : contact point (world)
-	radius     : requested sphere radius
-	direction  : travel direction, used to launch debris
-	speed      : client's current speed — server derives force/voxel size from it
-	             rather than trusting separate client-supplied numbers.
+	position : contact point (world)
+	velocity : the craft's travel vector at impact
 
-	Server clamps every field against FlightConfig.Destruction before carving.
+	Velocity carries BOTH direction and speed, so neither is sent separately.
+	Radius is not sent either: the server derives it from speed with the same
+	shared helper the client used, and was already clamping any client-sent
+	radius to exactly that value — so transmitting it was pure redundancy that
+	also widened the cheat surface.
+
+	Server re-validates everything against FlightConfig.Destruction.
 ]]
 Net.RequestCarve = Packet(
 	"RequestCarve",
 	Packet.Vector3F32,
-	Packet.NumberF32,
-	Packet.Vector3F32,
-	Packet.NumberF32
+	Packet.Vector3F32
 )
 
 --[[
