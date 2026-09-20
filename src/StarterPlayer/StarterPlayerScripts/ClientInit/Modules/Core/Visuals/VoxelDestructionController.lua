@@ -25,7 +25,7 @@ local NetworkKeys
 --------------------------------------------------------------------------------
 
 local PHYSICS_SNAPSHOT_INTERVAL = 1 / 20
-local DEBRIS_RENDER_DISTANCE = 220
+local DEBRIS_RENDER_DISTANCE = 500
 
 local VOXEL_CAPACITY = 30000
 

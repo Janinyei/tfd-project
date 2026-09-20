@@ -352,7 +352,7 @@ FlightConfig.Destruction = {
 		Tied to radius rather than speed on purpose — a big hole made of tiny
 		voxels is what actually costs, not speed itself.
 	]]
-	VoxelRadiusRatio = 1.8,
+	VoxelRadiusRatio = 0.5,
 
 	DebrisForceBase = 100,
 	DebrisForcePerSpeed = 0.1,

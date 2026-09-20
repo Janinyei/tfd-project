@@ -19,6 +19,7 @@
 local VoxelDestructionService = {}
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
 local PartCache = require(ReplicatedStorage.Modules.Packages.PartCache)
@@ -129,6 +130,15 @@ local ID_REUSE_DELAY = 1.25
 	than a suggestion. Must stay under MAX_VOXEL_ID, since every live voxel needs
 	a distinct u16 id.
 ]]
+--[[
+	Snapshot distance policy. Chunks past CULL are not sent at all (the client
+	does not render them either); chunks past NEAR are sent every Nth tick.
+	Tuned against DEBRIS_RENDER_DISTANCE on the client, which is 220.
+]]
+local SNAPSHOT_NEAR_DISTANCE = 120
+local SNAPSHOT_CULL_DISTANCE = 240
+local SNAPSHOT_FAR_DIVISOR = 4
+
 local SIM_PART_CAPACITY = 30000
 
 -- Seconds between debug census broadcasts.
@@ -214,6 +224,8 @@ local simFolder
 local physicsConnection
 local physicsAccumulator = 0
 local censusAccumulator = 0
+-- Advances once per snapshot tick; staggers far-chunk updates by voxel id.
+local snapshotTick = 0
 
 --------------------------------------------------------------------------------
 -- TEMPLATE
@@ -975,42 +987,83 @@ function VoxelDestructionService:_tickPhysics()
 	end
 
 
-	if #snapshotIds > 0 then
-		local buf = buffer.create(#snapshotIds * PHYSICS_UPDATE_BYTES)
-		local offset = 0
+	--[[
+		PER-PLAYER SNAPSHOTS.
 
-		for _, id in snapshotIds do
-			local entry = activeDynamicVoxels[id]
-			local part = entry and entry.Part
-			-- Freezing/eviction can have removed an id since it was listed.
-			if not part or not part.Parent then
+		Previously one buffer went to everyone via FireAllClients, so every client
+		paid for every tumbling chunk in the world — including ones far past the
+		distance at which their own controller culls them. That was the single
+		largest recurring stream.
+
+		Now each player gets only the chunks near them, and distant chunks are
+		sent at a reduced rate. Nothing is lost: a missed transform just leaves a
+		chunk briefly stale, and beyond SNAPSHOT_CULL_DISTANCE the client is not
+		rendering it at all.
+
+		Encoding is per player, but the cost is a distance check per chunk per
+		player at 20Hz, which is trivial next to the bytes it saves.
+	]]
+	if #snapshotIds > 0 then
+		snapshotTick += 1
+
+		for _, player in Players:GetPlayers() do
+			local character = player.Character
+			local root = character and character:FindFirstChild("HumanoidRootPart")
+			if not root then
 				continue
 			end
 
-			local cf = part.CFrame
-			local pos = cf.Position
-			local rx, ry, rz = cf:ToOrientation()
+			local origin = (root :: BasePart).Position
+			local buf = buffer.create(#snapshotIds * PHYSICS_UPDATE_BYTES)
+			local offset = 0
 
-			buffer.writeu16(buf, offset + 0, id)
-			buffer.writef32(buf, offset + 2, pos.X)
-			buffer.writef32(buf, offset + 6, pos.Y)
-			buffer.writef32(buf, offset + 10, pos.Z)
-			buffer.writei16(buf, offset + 14, clampI16Scaled(math.deg(rx), 100))
-			buffer.writei16(buf, offset + 16, clampI16Scaled(math.deg(ry), 100))
-			buffer.writei16(buf, offset + 18, clampI16Scaled(math.deg(rz), 100))
-			buffer.writeu8(buf, offset + 20, 0)
+			for _, id in snapshotIds do
+				local entry = activeDynamicVoxels[id]
+				local part = entry and entry.Part
+				-- Freezing/eviction can have removed an id since it was listed.
+				if not part or not part.Parent then
+					continue
+				end
 
-			offset += PHYSICS_UPDATE_BYTES
-		end
+				local cf = part.CFrame
+				local pos = cf.Position
+				local distance = (pos - origin).Magnitude
 
-		-- Trim if any listed id dropped out, so the client never decodes padding.
-		if offset > 0 then
-			if offset < buffer.len(buf) then
-				local trimmed = buffer.create(offset)
-				buffer.copy(trimmed, 0, buf, 0, offset)
-				buf = trimmed
+				if distance > SNAPSHOT_CULL_DISTANCE then
+					continue
+				end
+
+				-- Far chunks update on a slower cadence. Staggered by id so they
+				-- do not all land on the same tick and spike the frame.
+				if distance > SNAPSHOT_NEAR_DISTANCE
+					and (snapshotTick + id) % SNAPSHOT_FAR_DIVISOR ~= 0
+				then
+					continue
+				end
+
+				local rx, ry, rz = cf:ToOrientation()
+
+				buffer.writeu16(buf, offset + 0, id)
+				buffer.writef32(buf, offset + 2, pos.X)
+				buffer.writef32(buf, offset + 6, pos.Y)
+				buffer.writef32(buf, offset + 10, pos.Z)
+				buffer.writei16(buf, offset + 14, clampI16Scaled(math.deg(rx), 100))
+				buffer.writei16(buf, offset + 16, clampI16Scaled(math.deg(ry), 100))
+				buffer.writei16(buf, offset + 18, clampI16Scaled(math.deg(rz), 100))
+				buffer.writeu8(buf, offset + 20, 0)
+
+				offset += PHYSICS_UPDATE_BYTES
 			end
-			_voxelPhysicsEvent:FireAllClients(buf)
+
+			-- Trim so the client never decodes padding as a voxel at id 0.
+			if offset > 0 then
+				if offset < buffer.len(buf) then
+					local trimmed = buffer.create(offset)
+					buffer.copy(trimmed, 0, buf, 0, offset)
+					buf = trimmed
+				end
+				_voxelPhysicsEvent:FireClient(player, buf)
+			end
 		end
 	end
 
