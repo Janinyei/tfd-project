@@ -85,6 +85,28 @@ FlightConfig.Head = {
 	Response = 12,
 }
 
+--[[
+	Boost trail: one Trail on the HumanoidRootPart, shown for every player that
+	is boosting (driven by the replicated "Boosting" attribute, so other players
+	see it too).
+]]
+FlightConfig.Trail = {
+	-- Vertical separation of the two attachments == trail width.
+	Width = 3,
+	Lifetime = 0.45,
+	-- Studs the root must move before a new segment is emitted; stops a hovering
+	-- player from smearing a blob.
+	MinLength = 0.6,
+	Color = ColorSequence.new(Color3.fromRGB(120, 200, 255), Color3.fromRGB(255, 120, 60)),
+	Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.2),
+		NumberSequenceKeypoint.new(1, 1),
+	}),
+	LightEmission = 0.8,
+	-- Attribute the server sets; every client's trail mirrors it.
+	Attribute = "Boosting",
+}
+
 FlightConfig.Camera = {
 	-- Chase offset in craft-local space (behind + above).
 	Distance = 18,
@@ -277,14 +299,14 @@ FlightConfig.Destruction = {
 	-- Carve radius as a function of impact speed.
 	CarveRadiusBase = 6,
 	CarveRadiusPerSpeed = 0.035, -- + this * speed
-	CarveRadiusMax = 50,
+	CarveRadiusMax = 25,
 
 	-- Voxel granularity. Raised with speed: a big fast hole must not blow the
 	-- MAX_SUBDIVISIONS (2000) / SIM_PART_CAPACITY (4000) budget in
 	-- VoxelDestructionService.
-	MinVoxelSizeBase = 3,
+	MinVoxelSizeBase = 6,
 	MinVoxelSizePerSpeed = 0.012,
-	MinVoxelSizeMax = 5,
+	MinVoxelSizeMax = 100,
 
 	DebrisForceBase = 500,
 	DebrisForcePerSpeed = 0.35,
@@ -316,7 +338,7 @@ FlightConfig.Destruction = {
 	-- Hard clamp on the radius a client may ask for.
 	MaxRequestRadius = 100,
 	-- Hard floor on voxel size a client may ask for (small = expensive).
-	MinRequestVoxelSize = 10,
+	MinRequestVoxelSize = 15,
 	-- Server-side rate limit per player, slightly looser than the client's to
 	-- tolerate jitter.
 	ServerMinCarveInterval = 0.01,

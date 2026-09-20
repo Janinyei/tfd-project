@@ -37,6 +37,16 @@ Net.RequestCarve = Packet(
 )
 
 --[[
+	Client reports whether it is boosting.
+
+	The server mirrors this onto a character Attribute rather than relaying an
+	event, because Attributes replicate automatically to everyone INCLUDING late
+	joiners. A relayed event would leave a player who joined mid-boost with no
+	trail, and would need its own teardown on respawn.
+]]
+Net.SetBoosting = Packet("SetBoosting", Packet.Boolean8)
+
+--[[
 	Server -> Client: result of that player's carve request.
 
 	Payload: voxels actually knocked loose (0 = the request was rejected, or it

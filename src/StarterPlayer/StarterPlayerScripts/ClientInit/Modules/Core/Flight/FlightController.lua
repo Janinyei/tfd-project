@@ -525,6 +525,23 @@ function FlightController:Start()
 	Config = Core:Get("FlightConfig")
 	Camera = Core:Get("CameraController")
 
+	--[[
+		Publish boost state to the server, which mirrors it onto the character as
+		a replicated attribute for the boost trail.
+
+		Driven off StateChanged rather than polled: the state machine already
+		fires only on real transitions, so this is two packets per boost instead
+		of one per frame.
+	]]
+	local Net = Core:Get("Net")
+	self._trove:Add(self.State.StateChanged:Connect(function(oldState, newState)
+		local wasBoosting = oldState == FlightController.States.Boosting
+		local isBoosting = newState == FlightController.States.Boosting
+		if wasBoosting ~= isBoosting then
+			Net.SetBoosting:Fire(isBoosting)
+		end
+	end))
+
 	if player.Character then
 		self:_bindCharacter(player.Character)
 	end
