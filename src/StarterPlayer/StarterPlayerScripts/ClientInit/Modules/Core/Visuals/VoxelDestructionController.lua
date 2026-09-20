@@ -191,6 +191,12 @@ function VoxelDestructionController:Start()
 		self:_onPhysics(physicsBuffer)
 	end)
 
+	-- Map reset: drop every visual. The server has already restored the
+	-- original parts, which replicate on their own.
+	Core:Get("Net").VoxelsReset.OnClientEvent:Connect(function()
+		self:ClearAll()
+	end)
+
 	self._renderConnection = RunService.RenderStepped:Connect(function()
 		self:_renderDynamicVisuals()
 	end)
@@ -560,6 +566,23 @@ end
 	entries, so a mismatch between the two columns is information, not a bug —
 	it shows how much the client is culling.
 ]]
+--[[
+	Drop every voxel visual at once (map reset).
+
+	Iterates a snapshot of the ids because _evictVoxel mutates the table it
+	would otherwise be iterating.
+]]
+function VoxelDestructionController:ClearAll()
+	local ids = {}
+	for id in voxels do
+		table.insert(ids, id)
+	end
+	for _, id in ids do
+		self:_evictVoxel(id)
+	end
+	table.clear(dynamicVisuals)
+end
+
 function VoxelDestructionController:GetCensus(): (number, number)
 	local dynamic, static = 0, 0
 

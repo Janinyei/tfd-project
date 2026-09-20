@@ -38,6 +38,10 @@ local lastCarve: { [Player]: number } = {}
 ]]
 local peakSpeed: { [Player]: { Speed: number, Clock: number } } = {}
 
+-- player -> os.clock() of last map reset, and the shared cooldown.
+local lastReset: { [Player]: number } = {}
+local RESET_COOLDOWN = 1
+
 local function getRoot(player: Player): BasePart?
 	local character = player.Character
 	if not character then
@@ -101,7 +105,7 @@ function FlightDestructionService:_onRequestCarve(
 		peak = { Speed = measured, Clock = now }
 		peakSpeed[player] = peak
 	end
-	print(measured)
+
 
 	if math.max(measured, peak.Speed) < destruction.MinCarveSpeed * destruction.ServerSpeedTolerance then
 		return
@@ -118,7 +122,7 @@ function FlightDestructionService:_onRequestCarve(
 		flight.CruiseSpeed + flight.VerticalSpeed
 	)
 	speed = math.min(speed, maxTravelSpeed)
-	print(speed)
+
 
 	-- Radius is DERIVED, never accepted from the client: the same shared helper
 	-- the client used, clamped to MaxRequestRadius.
@@ -160,9 +164,27 @@ function FlightDestructionService:Start()
 		self:_onRequestCarve(player, position, velocity)
 	end)
 
+	--[[
+		Map reset. Rate limited per player because ResetAll walks every voxel and
+		every managed part, so spamming it would stall the server — and one reset
+		affects everyone, so any player can trigger it at most once a second.
+	]]
+	Net.RequestMapReset.OnServerEvent:Connect(function(player)
+		local now = os.clock()
+		local previous = lastReset[player]
+		if previous and now - previous < RESET_COOLDOWN then
+			return
+		end
+		lastReset[player] = now
+
+		local reclaimed = Voxel:ResetAll()
+		print(("[Map] reset by %s, %d voxels reclaimed"):format(player.Name, reclaimed))
+	end)
+
 	Players.PlayerRemoving:Connect(function(player)
 		lastCarve[player] = nil
 		peakSpeed[player] = nil
+		lastReset[player] = nil
 	end)
 end
 

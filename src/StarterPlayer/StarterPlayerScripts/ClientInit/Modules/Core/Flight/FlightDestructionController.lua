@@ -20,6 +20,7 @@
 ]]
 
 local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
@@ -410,6 +411,25 @@ function FlightDestructionController:Start()
 	self._trove:Connect(RunService.PostSimulation, function(dt)
 		self:_update(dt)
 		self:_expirePredictions(false)
+	end)
+
+	--[[
+		Map reset. Asks the server, which owns all destruction state; the reset
+		comes back as Net.VoxelsReset plus normal part replication.
+
+		Local predictions are dropped WITHOUT restoring collision: the server is
+		about to restore every original part itself, and re-enabling collision
+		here first would briefly fight that.
+	]]
+	self._trove:Connect(UserInputService.InputBegan, function(input, processed)
+		if processed or input.KeyCode ~= Config.Destruction.ResetMapKey then
+			return
+		end
+
+		table.clear(predictions)
+		lastCarvePosition = nil
+		lastCarveTime = 0
+		Net.RequestMapReset:Fire()
 	end)
 end
 

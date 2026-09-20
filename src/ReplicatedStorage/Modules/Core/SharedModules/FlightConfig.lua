@@ -278,6 +278,9 @@ FlightConfig.Destruction = {
 		No client-side voxelization is involved: whole parts lose collision, and
 		the server's authoritative geometry replaces them when it arrives.
 	]]
+	-- Key that resets the map to its untouched state (server-authoritative).
+	ResetMapKey = Enum.KeyCode.R,
+
 	PredictiveNoclip = true,
 	--[[
 		How long a prediction survives unconfirmed. Must comfortably exceed a bad
@@ -355,7 +358,7 @@ FlightConfig.Destruction = {
 	-- is meant to feel like the building loses.
 
 	-- Client-side carve rate limit. Also enforced server-side.
-	MinCarveInterval = 1,
+	MinCarveInterval = 0.1,
 
 	--------------------------------------------------------------------------------
 	-- SERVER VALIDATION CLAMPS (client requests outside these are rejected)

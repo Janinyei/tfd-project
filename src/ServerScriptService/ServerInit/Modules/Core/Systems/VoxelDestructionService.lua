@@ -1687,6 +1687,64 @@ function VoxelDestructionService:_clearSessionDebris(session)
 	end
 end
 
+--[[
+	Restore the whole map to its untouched state.
+
+	Every voxel is recycled and every damaged part gets its original properties
+	back, so the world returns to exactly how it started rather than to "healed
+	but still voxelised". Clients are told to drop their visuals wholesale with
+	one empty packet instead of a cleanup list, because at full pool that list
+	would be tens of thousands of ids for no benefit.
+
+	Returns how many voxels were reclaimed, for the caller to log.
+]]
+function VoxelDestructionService:ResetAll(): number
+	local reclaimed = 0
+
+	-- Recycle every voxel, whatever its state: shell, live debris or frozen.
+	for id in activeVoxels do
+		local entry = self:_extractActiveVoxel(id)
+		if entry then
+			local part = entry.Part
+			if part then
+				part.Anchored = true
+				part.AssemblyLinearVelocity = Vector3.zero
+				part.AssemblyAngularVelocity = Vector3.zero
+			end
+			self:_returnVoxelEntry(entry)
+			self:_queueFreeVoxelId(id, ID_REUSE_DELAY)
+			reclaimed += 1
+		end
+	end
+
+	-- Restore every part we ever touched.
+	for part, managed in managedParts do
+		if part and part.Parent then
+			part.Transparency = managed.origTransparency
+			part.CanCollide = managed.origCanCollide
+			part.CanQuery = managed.origCanQuery
+			part.CanTouch = managed.origCanTouch
+		end
+		managedParts[part] = nil
+	end
+
+	-- Pending regen timers hold stale session references; clearing the tables
+	-- they mutate is enough, since _regenSession bails when the part is no
+	-- longer managed.
+	table.clear(activeDynamicVoxels)
+	table.clear(frozenOrder)
+	frozenHead = 1
+	frozenCount = 0
+	activeVoxelCount = 0
+	deniedAllocations = 0
+
+	if Net then
+		Net.VoxelsReset:Fire()
+	end
+
+	return reclaimed
+end
+
 function VoxelDestructionService:_regenSession(session)
 	local part = session.OriginalPart
 	local managed = managedParts[part]

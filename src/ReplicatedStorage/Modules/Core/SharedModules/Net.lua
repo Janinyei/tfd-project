@@ -49,6 +49,14 @@ Net.RequestCarve = Packet(
 Net.SetBoosting = Packet("SetBoosting", Packet.Boolean8)
 
 --[[
+	Client asks the server to reset the map to its untouched state.
+
+	Debug/utility action: the server owns all destruction state, so a reset has
+	to originate there or clients would disagree about what exists.
+]]
+Net.RequestMapReset = Packet("RequestMapReset")
+
+--[[
 	Server -> Client: result of that player's carve request.
 
 	Payload: voxels actually knocked loose (0 = the request was rejected, or it
@@ -75,6 +83,14 @@ Net.CarveResult = Packet("CarveResult", Packet.NumberU16)
 	Sent from the server because these are server-owned truths: the client only
 	knows about voxels it was told to render, and skips distant debris entirely.
 ]]
+--[[
+	Server -> Client: drop every voxel visual immediately.
+
+	No payload on purpose. The alternative — a cleanup list — would be tens of
+	thousands of u16 ids at a full pool, to say something a single flag says.
+]]
+Net.VoxelsReset = Packet("VoxelsReset")
+
 Net.VoxelCensus = Packet(
 	"VoxelCensus",
 	Packet.NumberU16,
