@@ -247,7 +247,7 @@ FlightConfig.Destruction = {
 		suppress every further carve — a deadlock. After this long with no carve,
 		carve again regardless of how little the contact point moved.
 	]]
-	StallCarveInterval = 0.05,
+	StallCarveInterval = 0.2,
 
 	--[[
 		PREDICTIVE NOCLIP. On firing a carve request the client immediately drops
@@ -334,7 +334,18 @@ FlightConfig.Destruction = {
 	-- is meant to feel like the building loses.
 
 	-- Client-side carve rate limit. Also enforced server-side.
-	MinCarveInterval = 0.01,
+	--[[
+		Client-side carve rate limit. This is a REMOTE INVOCATION budget, not a
+		bandwidth one: Roblox throttles by how often a client fires remotes, and
+		past roughly 30/s it starts dropping them ("<player> is exceeding the
+		data/rate limit"). Dropped carves are the worst case — the wall never
+		opens, the craft rams it, and the probe fires even more requests.
+
+		0.05 caps the client at 20 requests/s. At 700 studs/s that is a carve
+		every ~35 studs, and a carve already opens a hole 20-60 studs wide, so
+		the tunnel stays continuous.
+	]]
+	MinCarveInterval = 0.05,
 
 	--------------------------------------------------------------------------------
 	-- SERVER VALIDATION CLAMPS (client requests outside these are rejected)
@@ -348,7 +359,7 @@ FlightConfig.Destruction = {
 	MinRequestVoxelSize = 15,
 	-- Server-side rate limit per player, slightly looser than the client's to
 	-- tolerate jitter.
-	ServerMinCarveInterval = 0.01,
+	ServerMinCarveInterval = 0.04,
 }
 
 -- Names of Workspace folders whose descendants are destructible.
