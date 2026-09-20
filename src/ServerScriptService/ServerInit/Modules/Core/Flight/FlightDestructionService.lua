@@ -101,6 +101,7 @@ function FlightDestructionService:_onRequestCarve(
 		peak = { Speed = measured, Clock = now }
 		peakSpeed[player] = peak
 	end
+	print(measured)
 
 	if math.max(measured, peak.Speed) < destruction.MinCarveSpeed * destruction.ServerSpeedTolerance then
 		return
@@ -117,6 +118,7 @@ function FlightDestructionService:_onRequestCarve(
 		flight.CruiseSpeed + flight.VerticalSpeed
 	)
 	speed = math.min(speed, maxTravelSpeed)
+	print(speed)
 
 	-- Radius is DERIVED, never accepted from the client: the same shared helper
 	-- the client used, clamped to MaxRequestRadius.
