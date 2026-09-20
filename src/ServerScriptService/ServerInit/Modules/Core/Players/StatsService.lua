@@ -48,11 +48,6 @@ end
 --[[
 	Add to a stat. Returns the new total, or nil if the player has no stats (they
 	left mid-flight, which is normal and not an error).
-
-	IntValue caps at 2^31-1; a carve is a few hundred voxels at most, so the only
-	way to approach that is a session running for weeks. Clamped anyway, because
-	an overflow would wrap negative and look like a bug in the destruction system
-	rather than in the counter.
 ]]
 function StatsService:Add(player: Player, statName: string, amount: number): number?
 	if amount <= 0 then
@@ -66,11 +61,11 @@ function StatsService:Add(player: Player, statName: string, amount: number): num
 
 	local value = playerStats[statName]
 	if not value then
-		warn(("[StatsService] Unknown stat '%s'"):format(statName))
+		warn(("Unknown stat '%s'"):format(statName))
 		return nil
 	end
 
-	value.Value = math.min(value.Value + math.floor(amount), 2 ^ 31 - 1)
+	value.Value = value.Value + math.floor(amount)
 	return value.Value
 end
 

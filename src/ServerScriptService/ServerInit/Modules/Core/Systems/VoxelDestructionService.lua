@@ -40,7 +40,7 @@ local DESTRUCTIBLE_CONTAINER_NAMES = {
 	"Map",
 }
 
-local DEFAULT_MIN_VOXEL_SIZE = 3
+local DEFAULT_MIN_VOXEL_SIZE = 30
 -- 0 == never regenerate. Destruction in this game is permanent.
 local DEFAULT_RESET_TIME = 0
 local DEFAULT_DEBRIS_FORCE = 30

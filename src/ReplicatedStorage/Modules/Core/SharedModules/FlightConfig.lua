@@ -278,6 +278,13 @@ FlightConfig.Destruction = {
 		round trip instead of a guess.
 	]]
 	ProbeRadius = 3,
+	--[[
+		Clearance cast radius: the craft's half-width. ProbeRadius detects
+		geometry early; this decides whether it is actually in the way. Too small
+		and you clip walls you thought you passed; too large and you re-carve
+		holes you already fit through.
+	]]
+	HullRadius = 2.2,
 	LeadFactor = 10,
 	-- Multiplier on measured round-trip time. GetNetworkPing() reports one-way
 	-- seconds, so 2.0 covers the full round trip.
@@ -304,8 +311,8 @@ FlightConfig.Destruction = {
 	-- Voxel granularity. Raised with speed: a big fast hole must not blow the
 	-- MAX_SUBDIVISIONS (2000) / SIM_PART_CAPACITY (4000) budget in
 	-- VoxelDestructionService.
-	MinVoxelSizeBase = 6,
-	MinVoxelSizePerSpeed = 0.012,
+	MinVoxelSizeBase = 90,
+	MinVoxelSizePerSpeed = 0.03,
 	MinVoxelSizeMax = 100,
 
 	DebrisForceBase = 500,

@@ -83,6 +83,9 @@ local probeDebug = {
 	TotalDestroyed = 0,
 	RejectedCount = 0,
 	PredictedParts = 0,
+	-- Frames where the wide probe hit something but the hull was clear: an
+	-- existing hole flown through without wasting a carve.
+	ClearPasses = 0,
 }
 
 local function resolveContainers(names: { string }): { Instance }
@@ -197,6 +200,35 @@ function FlightDestructionController:_update(dt: number)
 		return
 	end
 
+	probeDebug.HitPosition = result.Position
+	probeDebug.HitNormal = result.Normal
+
+	--[[
+		CLEARANCE GATE.
+
+		The probe sphere is deliberately wider than the craft so carves start
+		early, but that also means it clips the RIM of a hole the craft would fly
+		through untouched — spending carves, voxels and pool on geometry that was
+		never in the way. That is why "carves requested" climbs while flying
+		through an opening that is already big enough.
+
+		So the wide cast decides "there is something there" and a hull-sized cast
+		decides "it actually blocks me".
+	]]
+	local blocking = workspace:Spherecast(
+		castOrigin,
+		destruction.HullRadius,
+		direction * (leadDistance + destruction.ProbeBackoff),
+		castParams
+	)
+
+	if not blocking then
+		probeDebug.ClearPasses += 1
+		return
+	end
+
+	-- Carve where the HULL makes contact, not where the wide probe grazed.
+	result = blocking
 	probeDebug.HitPosition = result.Position
 	probeDebug.HitNormal = result.Normal
 
