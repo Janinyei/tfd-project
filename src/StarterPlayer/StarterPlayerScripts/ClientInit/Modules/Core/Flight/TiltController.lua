@@ -1,24 +1,26 @@
 --!strict
 --[[
-	HeadLookController  (client)
+	TiltController  (client)
 
-	Turns the character's head toward the camera aim. Ported from
-	dodgeball-game's MovementController tilt (the Neck half; the R6 torso lean and
-	hip counter-rotation are deliberately not carried over).
+	Cosmetic body tilt, two effects, both on Motor6D joints so neither fights the
+	AlignOrientation that FlightController uses to steer the body:
 
-	ACTIVE ONLY IN Cruising / Stationary. Suppressed while Boosting, because the
-	whole body already points down the look vector there and extra neck rotation
-	just over-rotates the head. Suppressed while Grounded so the default
-	PlayerModule look is untouched.
+	  HEAD LOOK  — the Neck turns toward the camera aim. Ported from
+	               dodgeball-game's MovementController tilt.
+	  BANK       — the Torso rolls into turns, proportional to how fast the aim
+	               is yawing, so hard turns visibly lean.
 
-	Local and cosmetic. Motor6D C0 writes replicate outward automatically from the
-	client that owns the character, so other players see the head turn with no
-	RemoteEvent plumbing.
+	Head look is active only while Cruising or Stationary (during a boost the
+	whole body already points down the look vector). Banking runs in every flying
+	state, because leaning into a turn reads best exactly when you are fastest.
 
-	RIG: R6's stock Neck C0 carries a baked axis twist, so its target has to be
-	rebuilt from scratch with a correction term. R15's Neck C0 is axis-aligned, so
-	the rotation is simply composed onto the default. Both are handled; anything
-	else is skipped.
+	Local and cosmetic: Motor6D C0 writes replicate automatically from the client
+	that owns the character, so other players see both effects with no remotes.
+
+	RIG: R6's Neck C0 carries a baked axis twist and needs a correction term;
+	R15's is axis-aligned. Both handled. The BANK is rig-agnostic because it
+	LEFT-multiplies the roll onto RootJoint.C0, which applies the rotation in the
+	HumanoidRootPart's frame rather than the joint's own.
 ]]
 
 local Players = game:GetService("Players")
@@ -29,13 +31,16 @@ local Trove = require(ReplicatedStorage.Modules.Utils.Trove)
 
 local player = Players.LocalPlayer
 
-local HeadLookController = {}
+local TiltController = {}
 
 local Core
 local Config
 local Flight
 
 local neck: Motor6D? = nil
+local rootJoint: Motor6D? = nil
+local defaultRootC0: CFrame? = nil
+local bankAngle = 0
 local defaultNeckC0: CFrame? = nil
 local neckY = 0
 local isR6 = false
@@ -59,7 +64,7 @@ local function trySetC0(joint: Motor6D, cframe: CFrame)
 	end)
 end
 
-function HeadLookController:_bindCharacter(character: Model)
+function TiltController:_bindCharacter(character: Model)
 	neck = nil
 	defaultNeckC0 = nil
 
@@ -86,9 +91,52 @@ function HeadLookController:_bindCharacter(character: Model)
 	neck = joint
 	defaultNeckC0 = joint.C0
 	neckY = joint.C0.Y
+
+	-- Both rigs put RootJoint on the HumanoidRootPart (HRP -> Torso on R6,
+	-- HRP -> LowerTorso on R15).
+	local root = character:FindFirstChild("HumanoidRootPart")
+	local rj = root and root:FindFirstChild("RootJoint")
+	if rj and rj:IsA("Motor6D") then
+		rootJoint = rj
+		defaultRootC0 = rj.C0
+		bankAngle = 0
+	end
 end
 
-function HeadLookController:_update(dt: number)
+--[[
+	Roll the torso into turns.
+
+	Target roll is proportional to the aim's yaw rate: turning left yaws
+	positively and rolls positively, which lifts the right side — a lean into
+	the turn. Clamped so a flick of the mouse cannot invert the character.
+
+	LEFT-multiplied onto the default C0 so the roll happens about the
+	HumanoidRootPart's Z axis. Right-multiplying would apply it in the joint's
+	own frame, which on R6 is rotated 90 degrees and would pitch instead of roll.
+]]
+function TiltController:_updateBank(dt: number)
+	local joint = rootJoint
+	local default = defaultRootC0
+	if not joint or not default or not joint.Parent then
+		return
+	end
+
+	local tilt = Config.Tilt
+	local target = 0
+
+	if Flight:IsFlying() then
+		target = math.clamp(
+			Flight:GetYawRate() * tilt.BankPerYawRate,
+			-math.rad(tilt.BankLimit),
+			math.rad(tilt.BankLimit)
+		)
+	end
+
+	bankAngle += (target - bankAngle) * ease(tilt.BankResponse, dt)
+	trySetC0(joint, CFrame.Angles(0, 0, bankAngle) * default)
+end
+
+function TiltController:_update(dt: number)
 	local joint = neck
 	local default = defaultNeckC0
 	if not joint or not default or not joint.Parent then
@@ -108,11 +156,11 @@ function HeadLookController:_update(dt: number)
 	-- Inactive: ease back to the rig's default pose rather than snapping, so
 	-- entering a boost does not jerk the head straight.
 	if not active then
-		trySetC0(joint, joint.C0:Lerp(default, ease(Config.Head.Response, dt)))
+		trySetC0(joint, joint.C0:Lerp(default, ease(Config.Tilt.HeadResponse, dt)))
 		return
 	end
 
-	local head = Config.Head
+	local tilt = Config.Tilt
 
 	--[[
 		Camera aim expressed in body space, then inverse-sine of the local X/Y
@@ -120,11 +168,11 @@ function HeadLookController:_update(dt: number)
 		of asin's domain edge and makes the head turn subtler than a 1:1 mapping.
 	]]
 	local rel = root.CFrame:ToObjectSpace(camera.CFrame).LookVector
-	local pitch = math.asin(math.clamp(rel.Y / head.LookDivisor, -1, 1))
-	local yaw = -math.asin(math.clamp(rel.X / head.LookDivisor, -1, 1))
+	local pitch = math.asin(math.clamp(rel.Y / tilt.LookDivisor, -1, 1))
+	local yaw = -math.asin(math.clamp(rel.X / tilt.LookDivisor, -1, 1))
 
-	pitch = math.clamp(pitch, -math.rad(head.PitchLimit), math.rad(head.PitchLimit))
-	yaw = math.clamp(yaw, -math.rad(head.YawLimit), math.rad(head.YawLimit))
+	pitch = math.clamp(pitch, -math.rad(tilt.PitchLimit), math.rad(tilt.PitchLimit))
+	yaw = math.clamp(yaw, -math.rad(tilt.YawLimit), math.rad(tilt.YawLimit))
 
 	local target
 	if isR6 then
@@ -135,15 +183,15 @@ function HeadLookController:_update(dt: number)
 		target = default * CFrame.Angles(pitch, yaw, 0)
 	end
 
-	trySetC0(joint, joint.C0:Lerp(target, ease(head.Response, dt)))
+	trySetC0(joint, joint.C0:Lerp(target, ease(tilt.HeadResponse, dt)))
 end
 
-function HeadLookController:Init(core)
+function TiltController:Init(core)
 	Core = core
 	self._trove = Trove.new()
 end
 
-function HeadLookController:Start()
+function TiltController:Start()
 	Config = Core:Get("FlightConfig")
 	Flight = Core:Get("FlightController")
 
@@ -158,7 +206,8 @@ function HeadLookController:Start()
 	-- frame's rather than the previous frame's.
 	self._trove:Connect(RunService.RenderStepped, function(dt)
 		self:_update(dt)
+		self:_updateBank(dt)
 	end)
 end
 
-return HeadLookController
+return TiltController

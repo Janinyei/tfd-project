@@ -77,6 +77,8 @@ local flying = false
 local yaw = 0
 local pitch = 0
 local aimOrientation = CFrame.identity
+-- Smoothed aim angular velocity (rad/s); drives the body bank in TiltController.
+local yawRate = 0
 
 -- Body facing. Eased toward travel direction; cosmetic only.
 local bodyOrientation = CFrame.identity
@@ -212,6 +214,7 @@ function FlightController:StartFlight()
 	boosting = false
 	mouseDeltaX, mouseDeltaY = 0, 0
 	mouseLocked = true
+	yawRate = 0
 
 	lastCommandedSpeed = 0
 	lastImpactLoss = 0
@@ -269,17 +272,28 @@ end
 
 -- Mouse aims the camera. Pixel delta maps directly to a yaw/pitch delta in
 -- radians: no smoothing, no speed term.
-function FlightController:_aim()
+function FlightController:_aim(dt: number)
 	local flight = Config.Flight
 	local gain = flight.MouseSensitivity * UserInputService.MouseDeltaSensitivity
 
-	yaw -= mouseDeltaX * gain
+	local yawDelta = -mouseDeltaX * gain
+	yaw += yawDelta
 	pitch = math.clamp(
 		pitch - mouseDeltaY * gain,
 		math.rad(flight.MinPitch),
 		math.rad(flight.MaxPitch)
 	)
 	mouseDeltaX, mouseDeltaY = 0, 0
+
+	--[[
+		Angular velocity of the aim, radians/sec, exponentially smoothed.
+
+		Raw delta/dt is far too noisy to drive a visible lean — mouse input
+		arrives in bursts, so an unsmoothed value makes the body twitch. Consumed
+		by TiltController for banking.
+	]]
+	local instantYawRate = if dt > 0 then yawDelta / dt else 0
+	yawRate += (instantYawRate - yawRate) * ease(flight.YawRateResponse, dt)
 
 	aimOrientation = CFrame.fromEulerAnglesYXZ(pitch, yaw, 0)
 end
@@ -380,7 +394,7 @@ function FlightController:_update(dt: number)
 		return
 	end
 
-	self:_aim()
+	self:_aim(dt)
 	velocity = self:_move(dt)
 	self:_detectImpact(velocity.Magnitude)
 
@@ -454,6 +468,11 @@ function FlightController:GetAimOrientation(): CFrame
 end
 
 -- Cosmetic body facing.
+-- Smoothed yaw angular velocity in radians/sec. Positive = turning left.
+function FlightController:GetYawRate(): number
+	return yawRate
+end
+
 function FlightController:GetOrientation(): CFrame
 	return bodyOrientation
 end

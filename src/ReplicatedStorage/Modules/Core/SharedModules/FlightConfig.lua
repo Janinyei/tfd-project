@@ -47,6 +47,10 @@ FlightConfig.Flight = {
 	-- MouseDeltaSensitivity. No speed term and no smoothing, so look speed is
 	-- identical at every travel speed.
 	MouseSensitivity = 0.006,
+	-- Smoothing applied to the aim's yaw angular velocity before anything reads
+	-- it (TiltController's bank). Mouse input arrives in bursts, so the raw
+	-- delta/dt is far too noisy to drive a visible lean.
+	YawRateResponse = 10,
 
 	-- How fast the BODY turns to face its travel direction, as an exponential
 	-- rate. Purely cosmetic: it never affects where you actually move.
@@ -68,21 +72,32 @@ FlightConfig.Flight = {
 }
 
 --[[
-	Head look. The head turns toward the camera aim while CRUISING or STATIONARY
-	only — during a boost the whole body already points down the look vector, so
-	adding neck rotation on top just over-rotates the head.
+	Cosmetic tilt (see TiltController).
 
-	Ported from dodgeball-game's MovementController tilt, with the R6-specific
-	neck-frame correction kept behind a rig check.
+	HEAD LOOK turns the neck toward the camera aim while CRUISING or STATIONARY
+	only — during a boost the whole body already points down the look vector, so
+	extra neck rotation just over-rotates the head.
+
+	BANK rolls the torso into turns, driven by how fast the aim is yawing.
 ]]
-FlightConfig.Head = {
+FlightConfig.Tilt = {
+	-- Head look
 	PitchLimit = 40, -- degrees up/down
 	YawLimit = 65, -- degrees left/right
 	-- Divides the aim components before asin: larger = subtler head turn.
 	LookDivisor = 1.2,
 	-- Exponential rate toward the target neck C0. Framerate-independent, unlike
 	-- the fixed per-frame 0.1 lerp in the dodgeball original.
-	Response = 12,
+	HeadResponse = 12,
+
+	-- Bank: degrees of roll per radian/sec of yaw. Higher = leans harder into
+	-- the same turn. This is the knob for how dramatic turns feel.
+	BankPerYawRate = 0.1,
+	-- Hard clamp in degrees, so a mouse flick cannot put the body sideways.
+	BankLimit = 35,
+	-- How fast the lean follows the turn. Low = lazy, heavy roll; high = snappy
+	-- and twitchy, since yaw rate itself is already smoothed upstream.
+	BankResponse = 7,
 }
 
 --[[
@@ -317,9 +332,9 @@ FlightConfig.Destruction = {
 	MinVoxelSizePerSpeed = 0.03,
 	MinVoxelSizeMax = 100,
 
-	DebrisForceBase = 500,
-	DebrisForcePerSpeed = 0.35,
-	DebrisForceMax = 5000,
+	DebrisForceBase = 100,
+	DebrisForcePerSpeed = 0.1,
+	DebrisForceMax = 500,
 
 	--[[
 		0 == PERMANENT. Carved geometry never regenerates; the hole and the shell
