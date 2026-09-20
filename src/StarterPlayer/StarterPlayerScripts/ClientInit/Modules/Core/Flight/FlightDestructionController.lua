@@ -27,6 +27,9 @@ local Trove = require(ReplicatedStorage.Modules.Utils.Trove)
 
 local player = Players.LocalPlayer
 
+-- Must match CollisionGroupManager / VoxelDestructionController.
+local DEBRIS_COLLISION_GROUP = "VoxelDebris"
+
 local FlightDestructionController = {}
 
 local Core
@@ -86,6 +89,11 @@ local probeDebug = {
 	-- Frames where the wide probe hit something but the hull was clear: an
 	-- existing hole flown through without wasting a carve.
 	ClearPasses = 0,
+	-- Probe hits on loose rubble that were refused before reaching the server.
+	DebrisSkips = 0,
+	LastHitName = "",
+	LastHitGroup = "",
+	LastHitParent = "",
 }
 
 local function resolveContainers(names: { string }): { Instance }
@@ -231,6 +239,26 @@ function FlightDestructionController:_update(dt: number)
 	result = blocking
 	probeDebug.HitPosition = result.Position
 	probeDebug.HitNormal = result.Normal
+
+	--[[
+		DEBRIS GUARD.
+
+		Loose rubble is not structure: carving it destroys nothing the player is
+		blocked by, burns pool and voxel ids, and spends a round trip per hit.
+		Debris is already CanQuery = false so it should never reach here, but the
+		guard is cheap and this is the exact path that was inflating the carve
+		counter — a belt-and-braces check beats trusting one property on
+		thousands of pooled parts that get recycled between roles.
+	]]
+	local hitPart = result.Instance
+	probeDebug.LastHitName = hitPart.Name
+	probeDebug.LastHitGroup = hitPart.CollisionGroup
+	probeDebug.LastHitParent = hitPart.Parent and hitPart.Parent.Name or "?"
+
+	if hitPart.CollisionGroup == DEBRIS_COLLISION_GROUP then
+		probeDebug.DebrisSkips += 1
+		return
+	end
 
 	local now = os.clock()
 	if now - lastCarveTime < destruction.MinCarveInterval then
